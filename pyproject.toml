@@ -5,7 +5,9 @@ description = "Minimal LangChain/LangGraph core scaffold with Bedrock and FastAP
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "asyncpg>=0.30.0",
     "fastapi==0.121.2",
+    "httpx>=0.28.1",
     "langchain==1.0.7",
     "langchain-aws==1.0.0",
     "langgraph==1.0.3",
@@ -22,4 +24,7 @@ dependencies = [
 dev = [
     "pytest>=8.3.5",
     "ruff>=0.8.0",
+]
+channels = [
+    "chainlit>=2.0.0",
 ]

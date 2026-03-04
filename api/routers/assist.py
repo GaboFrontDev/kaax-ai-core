@@ -21,11 +21,11 @@ async def stream_sse_response(request: AgentAssistRequest, agent_service):
     try:
         async for message in stream_request(request, agent_service):
             data = json.dumps(message.model_dump())
-            yield f"event: message\\ndata: {data}\\n\\n"
+            yield f"event: message\ndata: {data}\n\n"
             await asyncio.sleep(0.01)
     except Exception as exc:  # pylint: disable=broad-except
         error_data = json.dumps({"type": "error", "content": str(exc)})
-        yield f"event: error\\ndata: {error_data}\\n\\n"
+        yield f"event: error\ndata: {error_data}\n\n"
 
 
 @router.post("/api/agent/assist", response_model=AgentAssistResponse)

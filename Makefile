@@ -1,41 +1,86 @@
-PYTHON ?= python3
+SERVER_PORT ?= 8000
+HOST ?= 0.0.0.0
+API_BASE_URL ?= http://127.0.0.1:$(SERVER_PORT)
+API_TOKEN ?= dev-token
 
-.PHONY: run-api run-api-bedrock run-chainlit unit-tests integration-tests test \
-	db-upgrade db-downgrade db-current \
-	docker-up docker-down docker-logs docker-test-postgres \
-	docker-up-redis docker-test-redis \
-	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-sync-secrets awsctl
+CHAINLIT_PORT ?= 8300
+CHAINLIT_API_URL ?= $(API_BASE_URL)
+CHAINLIT_API_TOKEN ?= $(API_TOKEN)
+CHAINLIT_SHOW_TOOL_EVENTS ?= true
+
+WHATSAPP_WEBHOOK_URL ?= $(API_BASE_URL)/api/channels/whatsapp/meta/webhook
+WHATSAPP_VERIFY_TOKEN ?= dev-whatsapp-verify-token
 
 ENV ?= dev
 AGENT ?= default
 AWSCTL_ARGS ?= help
 
-run-api:
-	source ./.env.local && uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8200 --reload
+.PHONY: help \
+	sync sync-dev sync-channels \
+	run-api run-api-prod run-chainlit \
+	health assist webhook-verify \
+	test lint fmt \
+	docker-up docker-down docker-logs docker-up-redis docker-test-postgres docker-test-redis \
+	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-sync-secrets awsctl
 
-run-api-bedrock:
-	source ./.env.local && uv run --extra dev --extra bedrock --extra postgres uvicorn app.api.main:app --host 0.0.0.0 --port 8200 --reload
+help:
+	@echo "Targets disponibles:"
+	@echo "  make sync               -> instala dependencias base"
+	@echo "  make sync-dev           -> instala dependencias base + dev"
+	@echo "  make sync-channels      -> instala dependencias base + dev + chainlit"
+	@echo "  make run-api            -> levanta FastAPI en modo reload"
+	@echo "  make run-chainlit       -> levanta UI Chainlit conectada al API"
+	@echo "  make health             -> prueba GET /health"
+	@echo "  make assist             -> prueba POST /api/agent/assist"
+	@echo "  make webhook-verify     -> prueba verificacion de webhook WhatsApp"
+	@echo "  make test lint fmt      -> calidad de codigo"
+	@echo "  make docker-up/down     -> postgres local (compose)"
+	@echo "  make docker-up-redis    -> redis + sentinel local (compose)"
+
+sync:
+	uv sync
+
+sync-dev:
+	uv sync --group dev
+
+sync-channels:
+	uv sync --group dev --group channels
+
+run-api:
+	uv run uvicorn api.main:app --host $(HOST) --port $(SERVER_PORT) --reload
+
+run-api-prod:
+	uv run uvicorn api.main:app --host $(HOST) --port $(SERVER_PORT)
 
 run-chainlit:
-	source ./.env.local && uv run --extra dev --extra chainlit chainlit run app/channels/chainlit/app.py -w --port 8300
+	CHAINLIT_API_URL=$(CHAINLIT_API_URL) \
+	CHAINLIT_API_TOKEN=$(CHAINLIT_API_TOKEN) \
+	CHAINLIT_SHOW_TOOL_EVENTS=$(CHAINLIT_SHOW_TOOL_EVENTS) \
+	DATABASE_URL= \
+	LITERAL_API_KEY= \
+	PYTHONPATH=$(CURDIR) \
+	uv run --group channels chainlit run infra/chainlit/app.py -w --port $(CHAINLIT_PORT)
 
-unit-tests:
-	uv run --extra dev pytest app/tests/unit
+health:
+	curl -sS -m 3 "$(API_BASE_URL)/health"
 
-integration-tests:
-	uv run --extra dev pytest app/tests/integration
+assist:
+	curl -sS -X POST "$(API_BASE_URL)/api/agent/assist" \
+		-H "Authorization: Bearer $(API_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-d '{"userText":"cuanto es 25 * 4?","requestor":"local","streamResponse":false}'
+
+webhook-verify:
+	curl -sS "$(WHATSAPP_WEBHOOK_URL)?hub.mode=subscribe&hub.verify_token=$(WHATSAPP_VERIFY_TOKEN)&hub.challenge=ok"
 
 test:
-	uv run --extra dev pytest
+	uv run --group dev pytest
 
-db-upgrade:
-	source ./.env.local && uv run --extra migrations alembic upgrade head
+lint:
+	uv run --group dev ruff check .
 
-db-downgrade:
-	source ./.env.local && uv run --extra migrations alembic downgrade -1
-
-db-current:
-	source ./.env.local && uv run --extra migrations alembic current
+fmt:
+	uv run --group dev ruff format .
 
 docker-up:
 	docker compose up -d postgres
@@ -52,13 +97,8 @@ docker-logs:
 docker-test-postgres: docker-up
 	@echo "Waiting for postgres healthcheck..."
 	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' kaaxai-postgres 2>/dev/null)" = "healthy" ]; do sleep 1; done
-	CHECKPOINT_BACKEND=postgres \
-	DB_HOST=127.0.0.1 \
-	DB_PORT=55432 \
-	DB_USER=postgres \
-	DB_PASSWORD=postgres \
-	DB_NAME=postgres \
-	uv run --extra dev --extra postgres pytest app/tests/integration/test_postgres_backend.py
+	@DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/postgres \
+		uv run python -c "import asyncio; from sql_utilities import test_database_connection_async; print(asyncio.run(test_database_connection_async()))"
 
 docker-test-redis: docker-up-redis
 	@echo "Waiting for redis sentinels healthcheck..."
@@ -78,13 +118,7 @@ docker-test-redis: docker-up-redis
 			exit 1; \
 		fi; \
 	done
-	ATTACHMENT_BACKEND=redis \
-	MESSAGE_QUEUE_BACKEND=redis \
-	REDIS_MASTER_NAME=mymaster \
-	REDIS_SENTINELS=127.0.0.1:56379,127.0.0.1:56380,127.0.0.1:56381 \
-	REDIS_MASTER_HOST_OVERRIDE=127.0.0.1 \
-	REDIS_MASTER_PORT_OVERRIDE=56378 \
-	uv run --extra dev --extra redis pytest app/tests/integration/test_redis_backend.py
+	@echo "Redis Sentinel cluster healthy"
 
 cdk-bootstrap:
 	./ops/bootstrap.sh

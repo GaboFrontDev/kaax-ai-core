@@ -1,0 +1,87 @@
+{
+  "dev": {
+    "account": "301782007691",
+    "region": "us-east-1",
+    "agents": {
+      "default": {
+        "service_name": "kaax-dev-default",
+        "cpu": 512,
+        "memory_mib": 1024,
+        "cpu_architecture": "X86_64",
+        "desired_count": 1,
+        "min_capacity": 1,
+        "max_capacity": 2,
+        "container_port": 8200,
+        "health_check_path": "/health/live",
+        "public_load_balancer": true,
+        "enable_https": true,
+        "redirect_http": true,
+        "certificate_arn": "arn:aws:acm:us-east-1:301782007691:certificate/508c93aa-3a1c-4d3e-b002-97e6d17633d2",
+        "public_base_url": "https://api.kaax.ai",
+        "environment": {
+          "AUDRAI_DEPLOY_ENV": "dev",
+          "LOG_FORMAT": "json",
+          "LOG_LEVEL": "INFO"
+        },
+        "secret_name": "kaax/dev/default",
+        "secret_keys": [
+          "API_TOKENS",
+          "DATABASE_URL",
+          "AWS_REGION",
+          "MODEL_NAME",
+          "SMALL_MODEL",
+          "KNOWLEDGE_ADMIN_REQUESTORS",
+          "WHATSAPP_META_VERIFY_TOKEN",
+          "WHATSAPP_META_APP_SECRET",
+          "WHATSAPP_META_ACCESS_TOKEN"
+        ]
+      }
+    }
+  },
+  "prod": {
+    "account": "301782007691",
+    "region": "us-east-1",
+    "agents": {
+      "sales": {
+        "service_name": "kaax-prod-sales",
+        "cpu": 1024,
+        "memory_mib": 2048,
+        "cpu_architecture": "X86_64",
+        "desired_count": 2,
+        "min_capacity": 2,
+        "max_capacity": 6,
+        "container_port": 8200,
+        "health_check_path": "/health/live",
+        "public_load_balancer": true,
+        "enable_https": true,
+        "redirect_http": true,
+        "certificate_arn": "arn:aws:acm:us-east-1:301782007691:certificate/508c93aa-3a1c-4d3e-b002-97e6d17633d2",
+        "public_base_url": "https://api.kaax.ai",
+        "environment": {
+          "AUDRAI_DEPLOY_ENV": "prod",
+          "AGENT_RUNTIME_BACKEND": "langgraph_mvp",
+          "CHECKPOINT_BACKEND": "postgres",
+          "CRM_BACKEND": "postgres",
+          "INTERACTION_METRICS_BACKEND": "postgres",
+          "LOG_FORMAT": "json",
+          "LOG_LEVEL": "INFO",
+          "KNOWLEDGE_BACKEND": "postgres",
+          "KNOWLEDGE_TABLE_NAME"  : "agent_knowledge",
+          "PAYMENT_CHECKOUT_URL": "https://buy.stripe.com/7sY28s4HXbUvfgC72d0RG00"
+        },
+        "secret_name": "kaax/prod/sales",
+        "secret_keys": [
+          "API_TOKENS",
+          "DB_DSN",
+          "AWS_REGION",
+          "MODEL_NAME",
+          "SMALL_MODEL",
+          "KNOWLEDGE_ADMIN_REQUESTORS",
+          "WHATSAPP_META_VERIFY_TOKEN",
+          "WHATSAPP_META_APP_SECRET",
+          "WHATSAPP_META_ACCESS_TOKEN"
+        ]
+      }
+    }
+  }
+}

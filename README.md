@@ -1,57 +1,98 @@
-# Core (Minimal)
+# Core
 
-Version minima aislada del proyecto original para crear agentes nuevos desde cero con:
+Core aislado para construir agentes con LangChain/LangGraph + FastAPI, incluyendo:
 
-- Patron `settings -> model_builder -> agent`
-- Modelo Bedrock (sin Vertex/Chainlit)
-- API FastAPI (`/api/agent/assist`, `/health`)
-- Checkpoints de LangGraph en PostgreSQL
-- 2 tools de ejemplo en el mismo formato del repo
+- Patron `settings -> model_builder -> agent`.
+- Modelo Bedrock.
+- API principal (`/api/agent/assist`, `/health`).
+- Checkpoints de LangGraph en PostgreSQL.
+- Canal WhatsApp Meta (webhook verificacion + inbound/outbound).
+- Capa Chainlit conectada al API.
 
-## Estructura
+## Estructura principal
 
-- `core/settings.py`
-- `core/model_builder.py`
-- `core/agent.py`
-- `core/tools/*`
-- `core/prompts/agent.yaml`
-- `core/session_manager.py`
-- `core/sql_utilities.py`
-- `core/api/*`
+- `settings.py`
+- `model_builder.py`
+- `agent.py`
+- `tools/*`
+- `prompts/agent.yaml`
+- `session_manager.py`
+- `sql_utilities.py`
+- `api/*`
+- `infra/whatsapp_meta/*`
+- `infra/chainlit/*`
 
-## Levantar API
+## Setup rapido
 
-1. Entra al modulo:
+1. Copia `.env.example` a `.env` y completa credenciales.
+2. Instala dependencias:
 
 ```bash
-cd core
+make sync
 ```
 
-2. Copia `.env.example` a `.env` y completa credenciales.
-   - Para checkpoints se usa `DATABASE_URL` directamente.
-3. Instala dependencias del modulo:
+Si vas a usar Chainlit:
 
 ```bash
-uv sync
+make sync-channels
 ```
 
-4. Ejecuta:
+## Correr servicios
+
+API (FastAPI):
 
 ```bash
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+make run-api
 ```
 
-Si tienes un `VIRTUAL_ENV` activo de otro proyecto, usa `uv run --active ...` o desactivalo antes.
-
-## Request de ejemplo
+Chainlit (UI local, conectada al API):
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8000/api/agent/assist" \
-  -H "Authorization: Bearer dev-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userText": "cuanto es 25 * 4?",
-    "requestor": "local",
-    "streamResponse": false
-  }'
+make run-chainlit
+```
+
+Para ocultar/mostrar eventos de tools en la UI:
+
+```bash
+make run-chainlit CHAINLIT_SHOW_TOOL_EVENTS=true
+```
+
+## Endpoints
+
+- `GET /health`
+- `POST /api/agent/assist`
+- `GET /api/channels/whatsapp/meta/webhook` (verificacion Meta)
+- `POST /api/channels/whatsapp/meta/webhook` (eventos inbound Meta)
+
+## Variables clave de WhatsApp Meta
+
+En `.env`:
+
+- `WHATSAPP_META_VERIFY_TOKEN`
+- `WHATSAPP_META_APP_SECRET`
+- `WHATSAPP_META_ACCESS_TOKEN`
+- `WHATSAPP_META_API_VERSION`
+- `WHATSAPP_META_PHONE_NUMBER_ID`
+- `WHATSAPP_META_PROMPT_NAME`
+- `WHATSAPP_META_MODEL_NAME`
+- `WHATSAPP_META_TEMPERATURE`
+
+## Pruebas de humo
+
+Health:
+
+```bash
+make health
+```
+
+Assist:
+
+```bash
+make assist
+```
+
+Verificacion webhook WhatsApp:
+
+```bash
+make webhook-verify WHATSAPP_VERIFY_TOKEN=<tu_token>
 ```

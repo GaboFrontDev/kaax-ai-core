@@ -27,6 +27,19 @@ def _get_float(name: str, default: float) -> float:
         return default
 
 
+def _get_optional_float(name: str) -> float | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 # API
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -54,6 +67,16 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "core")
+
+# WhatsApp Meta
+WHATSAPP_META_VERIFY_TOKEN = os.getenv("WHATSAPP_META_VERIFY_TOKEN", "")
+WHATSAPP_META_APP_SECRET = os.getenv("WHATSAPP_META_APP_SECRET", "")
+WHATSAPP_META_ACCESS_TOKEN = os.getenv("WHATSAPP_META_ACCESS_TOKEN", "")
+WHATSAPP_META_API_VERSION = os.getenv("WHATSAPP_META_API_VERSION", "v21.0")
+WHATSAPP_META_PHONE_NUMBER_ID = os.getenv("WHATSAPP_META_PHONE_NUMBER_ID", "")
+WHATSAPP_META_PROMPT_NAME = os.getenv("WHATSAPP_META_PROMPT_NAME", DEFAULT_PROMPT_NAME)
+WHATSAPP_META_MODEL_NAME = os.getenv("WHATSAPP_META_MODEL_NAME", "")
+WHATSAPP_META_TEMPERATURE = _get_optional_float("WHATSAPP_META_TEMPERATURE")
 
 # Optional lightweight prompt-sanitizer rules
 BLOCK_PATTERNS = [
