@@ -35,6 +35,7 @@ router = APIRouter()
 
 
 @router.get("/api/channels/whatsapp/meta/webhook", response_class=PlainTextResponse)
+@router.get("/webhooks/whatsapp/meta", response_class=PlainTextResponse)
 async def verify_webhook(
     hub_mode: str = Query(default="", alias="hub.mode"),
     hub_verify_token: str = Query(default="", alias="hub.verify_token"),
@@ -62,6 +63,7 @@ async def verify_webhook(
 
 
 @router.post("/api/channels/whatsapp/meta/webhook")
+@router.post("/webhooks/whatsapp/meta")
 async def receive_webhook(
     request: Request,
     agent_service: AgentService = Depends(get_agent_service),

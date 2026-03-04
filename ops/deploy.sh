@@ -40,6 +40,9 @@ fi
 source "$CDK_VENV_DIR/bin/activate"
 cd "$CDK_DIR"
 
+# Avoid accidental overrides from generic shell vars.
+unset SECRET_NAME SECRET_ARN SECRET_KEYS
+
 EXTRA_CONTEXT_ARGS=()
 if [[ -n "${CDK_SECRET_NAME:-}" ]]; then
   EXTRA_CONTEXT_ARGS+=(-c "secret_name=${CDK_SECRET_NAME}")

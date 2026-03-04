@@ -6,11 +6,11 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 
-class EchoInput(BaseModel):
+class EchoInput():
     text: str = Field(..., description="Text to echo back to the user")
 
 
-@tool(args_schema=EchoInput)
+# @tool(args_schema=EchoInput)
 def echo_tool(text: str) -> str:
     """Return the same text received from the user."""
     return text
