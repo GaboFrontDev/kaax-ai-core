@@ -27,7 +27,7 @@ def build_tools(
     _ = email
     _ = stores
     return [
-        echo_tool,
+        # echo_tool,
         simple_math_tool,
     ]
 
