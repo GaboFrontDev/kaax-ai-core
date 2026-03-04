@@ -14,6 +14,7 @@ WHATSAPP_VERIFY_TOKEN ?= dev-whatsapp-verify-token
 ENV ?= dev
 AGENT ?= default
 AWSCTL_ARGS ?= help
+SESSION_ID ?=
 
 .PHONY: help \
 	sync sync-dev sync-channels \
@@ -21,7 +22,8 @@ AWSCTL_ARGS ?= help
 	health assist webhook-verify \
 	test lint fmt \
 	docker-up docker-down docker-logs docker-up-redis docker-test-postgres docker-test-redis \
-	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl
+	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl \
+	session-clear
 
 help:
 	@echo "Targets disponibles:"
@@ -37,6 +39,7 @@ help:
 	@echo "  make docker-up/down     -> postgres local (compose)"
 	@echo "  make docker-up-redis    -> redis + sentinel local (compose)"
 	@echo "  make cdk-cancel         -> cancela un update de CloudFormation en progreso"
+	@echo "  make session-clear      -> elimina memoria/checkpoints de un sessionId (SESSION_ID=...)"
 
 sync:
 	uv sync
@@ -145,3 +148,6 @@ cdk-sync-secrets:
 
 awsctl:
 	./ops/awsctl.sh $(AWSCTL_ARGS)
+
+session-clear:
+	./ops/session-clear.sh "$(SESSION_ID)"
