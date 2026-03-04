@@ -46,8 +46,15 @@ if [[ -n "${CDK_SECRET_KEYS:-}" ]]; then
   EXTRA_CONTEXT_ARGS+=(-c "secret_keys=${CDK_SECRET_KEYS}")
 fi
 
-cdk diff \
-  -c config="$CONFIG_FILE" \
-  -c env="$ENV_NAME" \
-  -c agent="$AGENT_NAME" \
-  "${EXTRA_CONTEXT_ARGS[@]}"
+if [[ ${#EXTRA_CONTEXT_ARGS[@]} -gt 0 ]]; then
+  cdk diff \
+    -c config="$CONFIG_FILE" \
+    -c env="$ENV_NAME" \
+    -c agent="$AGENT_NAME" \
+    "${EXTRA_CONTEXT_ARGS[@]}"
+else
+  cdk diff \
+    -c config="$CONFIG_FILE" \
+    -c env="$ENV_NAME" \
+    -c agent="$AGENT_NAME"
+fi

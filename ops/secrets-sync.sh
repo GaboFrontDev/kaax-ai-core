@@ -28,7 +28,7 @@ if [[ -z "$SECRET_NAME" ]]; then
   exit 1
 fi
 
-DEFAULT_KEYS="API_TOKENS,DATABASE_URL,AWS_REGION,BEDROCK_MODEL,DEFAULT_PROMPT_NAME,WHATSAPP_META_VERIFY_TOKEN,WHATSAPP_META_APP_SECRET,WHATSAPP_META_ACCESS_TOKEN,WHATSAPP_META_PHONE_NUMBER_ID"
+DEFAULT_KEYS="API_TOKENS,DATABASE_URL,DB_DSN,AWS_REGION,BEDROCK_MODEL,MODEL_NAME,DEFAULT_PROMPT_NAME,SMALL_MODEL,WHATSAPP_META_VERIFY_TOKEN,WHATSAPP_META_APP_SECRET,WHATSAPP_META_ACCESS_TOKEN,WHATSAPP_META_PHONE_NUMBER_ID"
 RAW_KEYS="${CDK_SECRET_KEYS:-${SECRET_KEYS:-$DEFAULT_KEYS}}"
 
 IFS=',' read -r -a KEYS <<<"$RAW_KEYS"
@@ -54,11 +54,21 @@ keys = sys.argv[3:]
 
 payload: dict[str, str] = {}
 missing: list[str] = []
+legacy_aliases = {
+    "DB_DSN": "DATABASE_URL",
+    "MODEL_NAME": "BEDROCK_MODEL",
+    "SMALL_MODEL": "DEFAULT_PROMPT_NAME",
+}
 for key in keys:
     key = key.strip()
     if not key:
         continue
     value = os.getenv(key)
+    if (value is None or value == "") and key in legacy_aliases:
+        alias_key = legacy_aliases[key]
+        alias_value = os.getenv(alias_key)
+        if alias_value is not None and (alias_value != "" or force_overwrite):
+            value = alias_value
     if value is None:
         missing.append(key)
         continue

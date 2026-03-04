@@ -127,6 +127,7 @@ Commands:
   deploy [env] [agent]        Run CDK deploy
   diff [env] [agent]          Run CDK diff
   destroy [env] [agent]       Run CDK destroy
+  cancel [env] [agent]        Cancel CloudFormation update in progress
   sync-secrets [secret-name]  Sync shell exports to AWS Secrets Manager
   status [env] [agent]        CloudFormation stack status
   events [env] [agent]        CloudFormation stack events (latest 25)
@@ -160,6 +161,37 @@ case "$command_name" in
     env_name="${2:-$DEFAULT_ENV}"
     agent_name="${3:-$DEFAULT_AGENT}"
     exec "$ROOT_DIR/ops/destroy.sh" "$env_name" "$agent_name"
+    ;;
+  cancel)
+    env_name="${2:-$DEFAULT_ENV}"
+    agent_name="${3:-$DEFAULT_AGENT}"
+    stack="$(stack_name "$env_name" "$agent_name")"
+    stack_status="$(
+      aws cloudformation describe-stacks \
+        --stack-name "$stack" \
+        --region "$DEFAULT_REGION" \
+        --query "Stacks[0].StackStatus" \
+        --output text 2>/dev/null || true
+    )"
+
+    if [[ -z "$stack_status" || "$stack_status" == "None" ]]; then
+      fail "Stack not found: ${stack}"
+      exit 1
+    fi
+
+    case "$stack_status" in
+      UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS)
+        aws cloudformation cancel-update-stack \
+          --stack-name "$stack" \
+          --region "$DEFAULT_REGION"
+        pass "Cancel requested for stack ${stack} (${stack_status})"
+        ;;
+      *)
+        warn "Stack ${stack} is in status ${stack_status}"
+        warn "cancel-update-stack applies only while an update is in progress."
+        exit 2
+        ;;
+    esac
     ;;
   sync-secrets)
     secret_name="${2:-}"

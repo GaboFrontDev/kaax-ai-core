@@ -21,7 +21,7 @@ AWSCTL_ARGS ?= help
 	health assist webhook-verify \
 	test lint fmt \
 	docker-up docker-down docker-logs docker-up-redis docker-test-postgres docker-test-redis \
-	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-sync-secrets awsctl
+	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl
 
 help:
 	@echo "Targets disponibles:"
@@ -36,6 +36,7 @@ help:
 	@echo "  make test lint fmt      -> calidad de codigo"
 	@echo "  make docker-up/down     -> postgres local (compose)"
 	@echo "  make docker-up-redis    -> redis + sentinel local (compose)"
+	@echo "  make cdk-cancel         -> cancela un update de CloudFormation en progreso"
 
 sync:
 	uv sync
@@ -131,6 +132,9 @@ cdk-diff:
 
 cdk-destroy:
 	./ops/destroy.sh $(ENV) $(AGENT)
+
+cdk-cancel:
+	./ops/awsctl.sh cancel $(ENV) $(AGENT)
 
 cdk-sync-secrets:
 	@set -a; \
