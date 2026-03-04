@@ -59,7 +59,7 @@ def _filter_thinking_stream_text(text: str, state: dict[str, Any]) -> str:
                 state["carry"] = working[-keep:] if keep else ""
                 return "".join(visible_parts)
 
-            working = working[end_index + len(THINKING_CLOSE_TAG):]
+            working = working[end_index + len(THINKING_CLOSE_TAG) :]
             state["inside_thinking"] = False
             continue
 
@@ -81,7 +81,7 @@ def _filter_thinking_stream_text(text: str, state: dict[str, Any]) -> str:
             state["carry"] = working
             return "".join(visible_parts)
 
-        working = working[open_tag_end + 1:]
+        working = working[open_tag_end + 1 :]
         state["inside_thinking"] = True
 
     return "".join(visible_parts)
@@ -103,7 +103,9 @@ def _ensure_json_serializable(value: Any) -> Any:
         return value
     except TypeError:
         if isinstance(value, dict):
-            return {str(key): _ensure_json_serializable(item) for key, item in value.items()}
+            return {
+                str(key): _ensure_json_serializable(item) for key, item in value.items()
+            }
         if isinstance(value, list):
             return [_ensure_json_serializable(item) for item in value]
         return str(value)
@@ -173,7 +175,9 @@ def _build_config(
     }
 
 
-async def process_request(request: AgentAssistRequest, agent_service) -> AgentAssistResponse:
+async def process_request(
+    request: AgentAssistRequest, agent_service
+) -> AgentAssistResponse:
     start_time = time.time()
     callback_handler = APICallbackHandler()
     agent = agent_service.create_agent_for_request(request, callback_handler)
@@ -290,6 +294,7 @@ async def stream_request(
     yield StreamingMessage(
         type=StreamingMessageType.COMPLETE,
         content="Request complete",
+        tools_used=sorted(set(callback_handler.tools_used)),
         conversation_id=session_id,
         run_id=run_id,
     )

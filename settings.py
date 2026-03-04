@@ -11,10 +11,8 @@ from dotenv import load_dotenv
 load_dotenv(join(dirname(__file__), ".env"))
 
 
-
 def _get_bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
-
 
 
 def _get_float(name: str, default: float) -> float:
@@ -23,6 +21,16 @@ def _get_float(name: str, default: float) -> float:
         return default
     try:
         return float(value)
+    except ValueError:
+        return default
+
+
+def _get_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
     except ValueError:
         return default
 
@@ -49,6 +57,11 @@ API_TOKENS = [
     for token in os.getenv("API_TOKENS", "dev-token").split(",")
     if token.strip()
 ]
+LOOP_GRAPH_ENABLED = _get_bool("LOOP_GRAPH_ENABLED", True)
+LOOP_GRAPH_WINDOW_SECONDS = _get_int("LOOP_GRAPH_WINDOW_SECONDS", 90)
+LOOP_GRAPH_THRESHOLD = _get_int("LOOP_GRAPH_THRESHOLD", 1)
+LOOP_GRAPH_MAX_MESSAGE_CHARS = _get_int("LOOP_GRAPH_MAX_MESSAGE_CHARS", 24)
+LOOP_GRAPH_MAX_TOKENS = _get_int("LOOP_GRAPH_MAX_TOKENS", 1)
 
 # Bedrock / model
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")

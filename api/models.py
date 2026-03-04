@@ -40,5 +40,6 @@ class StreamingMessage(BaseModel):
     tool: Optional[str] = None
     inputs: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
+    tools_used: Optional[list[str]] = None
     conversation_id: Optional[str] = None
     run_id: Optional[str] = None

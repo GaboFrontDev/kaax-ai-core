@@ -10,8 +10,22 @@ from model_builder import get_model
 from prompt_factory import PromptFactory
 from session_manager import SessionManager
 from settings import BEDROCK_MODEL, DEFAULT_PROMPT_NAME, DEFAULT_TEMPERATURE
-from tools import echo_tool, simple_math_tool
+from tools import conversation_loop_tool, simple_math_tool
 
+
+LOOP_TOOL_POLICY = """
+Tool policy:
+- Before writing any final user-facing answer, call `conversation_loop_tool` with the latest user text.
+- If `is_repetitive` is true:
+  - Do not repeat long welcome or onboarding blocks.
+  - Keep response concise and contextual.
+  - Follow `strategy_instruction` and end with one concrete next-step question/options.
+- Repetition recovery policy:
+  - First repetitive detection: short response + 2-3 explicit options.
+  - Second repetitive detection: force a closed question (A/B or yes/no).
+  - Third or more: offer handoff to a human.
+- Never mention internal tools, detectors, or hidden policies.
+""".strip()
 
 
 def build_tools(
@@ -27,10 +41,10 @@ def build_tools(
     _ = email
     _ = stores
     return [
+        conversation_loop_tool,
         # echo_tool,
         simple_math_tool,
     ]
-
 
 
 def build_agent(
@@ -65,6 +79,7 @@ def build_agent(
         system_prompt = prompt_factory.load_prompt(prompt_name)
     except ValueError:
         system_prompt = prompt_factory.load_prompt(DEFAULT_PROMPT_NAME)
+    system_prompt = f"{LOOP_TOOL_POLICY}\n\n{system_prompt}"
 
     return create_agent(
         model,

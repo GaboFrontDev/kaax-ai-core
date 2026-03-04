@@ -12,8 +12,10 @@ class ChainlitAdapter:
         return AgentAssistRequest(
             userText=str(raw.get("message", "")).strip(),
             requestor=str(raw.get("user", "chainlit:user")).strip() or "chainlit:user",
-            sessionId=str(raw.get("thread_id", "chainlit:thread")).strip() or "chainlit:thread",
+            sessionId=str(raw.get("thread_id", "chainlit:thread")).strip()
+            or "chainlit:thread",
             streamResponse=bool(raw.get("stream", False)),
+            toolChoice=self._optional_string(raw.get("tool_choice")),
             promptName=self._optional_string(raw.get("prompt_name")),
             modelName=self._optional_string(raw.get("model_name")),
         )

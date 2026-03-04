@@ -16,8 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.models import AgentAssistResponse
-from infra.chainlit.adapter import ChainlitAdapter
+from api.models import AgentAssistResponse  # noqa: E402
+from infra.chainlit.adapter import ChainlitAdapter  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,12 @@ API_BASE_URL = os.getenv("CHAINLIT_API_URL", "http://127.0.0.1:8000").rstrip("/"
 API_TOKEN = os.getenv("CHAINLIT_API_TOKEN", "dev-token")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("CHAINLIT_API_TIMEOUT_SECONDS", "90"))
 DEFAULT_PROMPT_NAME = (os.getenv("CHAINLIT_PROMPT_NAME") or "").strip() or None
+DEFAULT_TOOL_CHOICE = (
+    os.getenv("CHAINLIT_TOOL_CHOICE") or "required"
+).strip() or "required"
 SHOW_TOOL_EVENTS = (
-    (os.getenv("CHAINLIT_SHOW_TOOL_EVENTS") or "true").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+    os.getenv("CHAINLIT_SHOW_TOOL_EVENTS") or "true"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 
 async def _parse_error_detail(response: httpx.Response) -> str:
@@ -147,7 +149,9 @@ async def on_chat_start() -> None:
 
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
-    thread_id = str(cl.user_session.get("thread_id") or f"chainlit:{cl.context.session.id}")
+    thread_id = str(
+        cl.user_session.get("thread_id") or f"chainlit:{cl.context.session.id}"
+    )
     adapter = ChainlitAdapter()
 
     request_payload = await adapter.normalize_inbound(
@@ -156,6 +160,7 @@ async def on_message(message: cl.Message) -> None:
             "user": f"chainlit:{_requestor()}",
             "thread_id": thread_id,
             "stream": True,
+            "tool_choice": DEFAULT_TOOL_CHOICE,
             "prompt_name": DEFAULT_PROMPT_NAME,
         }
     )
@@ -170,7 +175,9 @@ async def on_message(message: cl.Message) -> None:
 
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as response:
+            async with client.stream(
+                "POST", url, json=payload, headers=headers
+            ) as response:
                 if response.status_code >= 400:
                     detail = await _parse_error_detail(response)
                     await cl.Message(
@@ -193,6 +200,8 @@ async def on_message(message: cl.Message) -> None:
                 stream_message = cl.Message(content="")
                 await stream_message.send()
                 seen_content = False
+                saw_tool_event = False
+                tools_used_from_complete: list[str] = []
                 pending_tool_steps: dict[str, deque[cl.Step]] = defaultdict(deque)
 
                 async for event_name, raw_data in _iter_sse_events(response):
@@ -223,6 +232,7 @@ async def on_message(message: cl.Message) -> None:
                             await stream_message.stream_token(token)
 
                     if SHOW_TOOL_EVENTS and payload_message.get("type") == "tool_start":
+                        saw_tool_event = True
                         tool_name = str(payload_message.get("tool") or "unknown_tool")
                         await _handle_tool_start(
                             pending_tool_steps,
@@ -230,7 +240,11 @@ async def on_message(message: cl.Message) -> None:
                             tool_inputs=payload_message.get("inputs"),
                         )
 
-                    if SHOW_TOOL_EVENTS and payload_message.get("type") == "tool_result":
+                    if (
+                        SHOW_TOOL_EVENTS
+                        and payload_message.get("type") == "tool_result"
+                    ):
+                        saw_tool_event = True
                         tool_name = str(payload_message.get("tool") or "unknown_tool")
                         await _handle_tool_result(
                             pending_tool_steps,
@@ -239,6 +253,13 @@ async def on_message(message: cl.Message) -> None:
                         )
 
                     if payload_message.get("type") == "complete":
+                        raw_tools = payload_message.get("tools_used") or []
+                        if isinstance(raw_tools, list):
+                            tools_used_from_complete = [
+                                str(item).strip()
+                                for item in raw_tools
+                                if str(item).strip()
+                            ]
                         break
 
                 if not seen_content:
@@ -246,6 +267,12 @@ async def on_message(message: cl.Message) -> None:
                     await stream_message.update()
                 else:
                     await stream_message.update()
+
+                if SHOW_TOOL_EVENTS and not saw_tool_event and tools_used_from_complete:
+                    tools_text = ", ".join(sorted(set(tools_used_from_complete)))
+                    await cl.Message(content=f"Tools usados: {tools_text}").send()
     except Exception as exc:
         logger.exception("chainlit_message_error")
-        await cl.Message(content=f"No se pudo conectar con la API: {type(exc).__name__}: {exc}").send()
+        await cl.Message(
+            content=f"No se pudo conectar con la API: {type(exc).__name__}: {exc}"
+        ).send()
