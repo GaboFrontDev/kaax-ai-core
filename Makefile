@@ -1,4 +1,4 @@
-SERVER_PORT ?= 8000
+SERVER_PORT ?= 8200
 HOST ?= 0.0.0.0
 API_BASE_URL ?= http://127.0.0.1:$(SERVER_PORT)
 API_TOKEN ?= dev-token
@@ -133,6 +133,10 @@ cdk-destroy:
 	./ops/destroy.sh $(ENV) $(AGENT)
 
 cdk-sync-secrets:
+	@set -a; \
+	if [ -f ./.env ]; then . ./.env; fi; \
+	if [ -f ./.env.local ]; then . ./.env.local; fi; \
+	set +a; \
 	./ops/secrets-sync.sh $(CDK_SECRET_NAME)
 
 awsctl:

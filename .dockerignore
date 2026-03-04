@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.local
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.chainlit/
+infra/cdk/.venv/
+infra/cdk/cdk.out/
+infra/cdk/config/environments.json
+uv.lock.orig

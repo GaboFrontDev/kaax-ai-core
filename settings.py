@@ -54,14 +54,18 @@ API_TOKENS = [
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
-BEDROCK_MODEL = os.getenv("BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+BEDROCK_MODEL = (
+    os.getenv("BEDROCK_MODEL")
+    or os.getenv("MODEL_NAME")
+    or "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+)
 DEFAULT_TEMPERATURE = _get_float("DEFAULT_TEMPERATURE", 0.5)
 
 # Agent prompt
 DEFAULT_PROMPT_NAME = os.getenv("DEFAULT_PROMPT_NAME", "agent")
 
 # Checkpoints DB
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DB_DSN") or ""
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")

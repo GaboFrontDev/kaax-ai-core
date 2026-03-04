@@ -60,6 +60,7 @@ make run-chainlit CHAINLIT_SHOW_TOOL_EVENTS=true
 ## Endpoints
 
 - `GET /health`
+- `GET /health/live`
 - `POST /api/agent/assist`
 - `GET /api/channels/whatsapp/meta/webhook` (verificacion Meta)
 - `POST /api/channels/whatsapp/meta/webhook` (eventos inbound Meta)
@@ -95,4 +96,17 @@ Verificacion webhook WhatsApp:
 
 ```bash
 make webhook-verify WHATSAPP_VERIFY_TOKEN=<tu_token>
+```
+
+## Deploy AWS (CDK)
+
+1. Ajusta `infra/cdk/config/environments.json`.
+2. Exporta variables secretas requeridas en tu shell.
+3. Sincroniza secretos y despliega:
+
+```bash
+make cdk-bootstrap
+make cdk-sync-secrets CDK_SECRET_NAME=kaax/dev/default
+make cdk-diff ENV=dev AGENT=default
+make cdk-deploy ENV=dev AGENT=default
 ```

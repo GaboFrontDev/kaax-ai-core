@@ -19,7 +19,7 @@
         "certificate_arn": null,
         "public_base_url": null,
         "environment": {
-          "AUDRAI_DEPLOY_ENV": "dev",
+          "APP_DEPLOY_ENV": "dev",
           "AGENT_RUNTIME_BACKEND": "langgraph_mvp",
           "CHECKPOINT_BACKEND": "postgres",
           "CRM_BACKEND": "postgres",
@@ -30,14 +30,14 @@
         "secret_name": "kaax/dev/default",
         "secret_keys": [
           "API_TOKENS",
-          "DB_DSN",
+          "DATABASE_URL",
           "AWS_REGION",
-          "MODEL_NAME",
-          "SMALL_MODEL",
-          "KNOWLEDGE_ADMIN_REQUESTORS",
+          "BEDROCK_MODEL",
+          "DEFAULT_PROMPT_NAME",
           "WHATSAPP_META_VERIFY_TOKEN",
           "WHATSAPP_META_APP_SECRET",
-          "WHATSAPP_META_ACCESS_TOKEN"
+          "WHATSAPP_META_ACCESS_TOKEN",
+          "WHATSAPP_META_PHONE_NUMBER_ID"
         ]
       }
     }
@@ -62,7 +62,7 @@
         "certificate_arn": null,
         "public_base_url": null,
         "environment": {
-          "AUDRAI_DEPLOY_ENV": "prod",
+          "APP_DEPLOY_ENV": "prod",
           "AGENT_RUNTIME_BACKEND": "langgraph_mvp",
           "CHECKPOINT_BACKEND": "postgres",
           "CRM_BACKEND": "postgres",
@@ -73,14 +73,14 @@
         "secret_name": "kaax/prod/sales",
         "secret_keys": [
           "API_TOKENS",
-          "DB_DSN",
+          "DATABASE_URL",
           "AWS_REGION",
-          "MODEL_NAME",
-          "SMALL_MODEL",
-          "KNOWLEDGE_ADMIN_REQUESTORS",
+          "BEDROCK_MODEL",
+          "DEFAULT_PROMPT_NAME",
           "WHATSAPP_META_VERIFY_TOKEN",
           "WHATSAPP_META_APP_SECRET",
-          "WHATSAPP_META_ACCESS_TOKEN"
+          "WHATSAPP_META_ACCESS_TOKEN",
+          "WHATSAPP_META_PHONE_NUMBER_ID"
         ]
       }
     }
