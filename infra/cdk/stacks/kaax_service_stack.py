@@ -47,6 +47,7 @@ class DeploymentConfig:
     public_base_url: str | None = None
     health_check_path: str = "/health/live"
     health_check_grace_seconds: int = 120
+    deregistration_delay_seconds: int = 30
     vpc_id: str | None = None
     environment: dict[str, str] = field(default_factory=dict)
     secret_name: str | None = None
@@ -106,6 +107,7 @@ def load_deployment_config(
         public_base_url=agent_raw.get("public_base_url"),
         health_check_path=str(agent_raw.get("health_check_path", "/health/live")),
         health_check_grace_seconds=int(agent_raw.get("health_check_grace_seconds", 120)),
+        deregistration_delay_seconds=int(agent_raw.get("deregistration_delay_seconds", 30)),
         vpc_id=agent_raw.get("vpc_id"),
         environment={
             str(key): str(value)
@@ -285,6 +287,10 @@ class KaaxServiceStack(Stack):
             healthy_http_codes="200",
             interval=Duration.seconds(30),
             timeout=Duration.seconds(10),
+        )
+        fargate_service.target_group.set_attribute(
+            key="deregistration_delay.timeout_seconds",
+            value=str(config.deregistration_delay_seconds),
         )
 
         scaling = fargate_service.service.auto_scale_task_count(

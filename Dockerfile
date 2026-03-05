@@ -9,13 +9,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md ./
-COPY __init__.py ./
-COPY agent.py ./
-COPY model_builder.py ./
-COPY prompt_factory.py ./
-COPY session_manager.py ./
-COPY settings.py ./
-COPY sql_utilities.py ./
+COPY *.py ./
 COPY api ./api
 COPY tools ./tools
 COPY prompts ./prompts

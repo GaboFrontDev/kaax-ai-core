@@ -39,6 +39,7 @@ help:
 	@echo "  make docker-up/down     -> postgres local (compose)"
 	@echo "  make docker-up-redis    -> redis + sentinel local (compose)"
 	@echo "  make cdk-cancel         -> cancela un update de CloudFormation en progreso"
+	@echo "  make cdk-logs           -> sigue los logs del contenedor en ECS en tiempo real"
 	@echo "  make session-clear      -> elimina memoria/checkpoints de un sessionId (SESSION_ID=...)"
 
 sync:
@@ -138,6 +139,20 @@ cdk-destroy:
 
 cdk-cancel:
 	./ops/awsctl.sh cancel $(ENV) $(AGENT)
+
+cdk-logs:
+	@LOG_GROUP=$$(aws logs describe-log-groups \
+		--region us-east-1 \
+		--query "logGroups[?contains(logGroupName,'kaax-$(ENV)')].logGroupName | [0]" \
+		--output text 2>/dev/null); \
+	if [ -z "$$LOG_GROUP" ] || [ "$$LOG_GROUP" = "None" ]; then \
+		LOG_GROUP=$$(aws logs describe-log-groups \
+			--region us-east-1 \
+			--query "logGroups[?contains(logGroupName,'Kaax')].logGroupName | [0]" \
+			--output text); \
+	fi; \
+	echo "Log group: $$LOG_GROUP"; \
+	aws logs tail "$$LOG_GROUP" --follow --region us-east-1 --format short
 
 cdk-sync-secrets:
 	@set -a; \
