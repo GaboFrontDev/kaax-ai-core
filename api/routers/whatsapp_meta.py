@@ -13,7 +13,7 @@ from api.agent_service import AgentService
 from api.dependencies import get_agent_service
 from api.handlers import process_request
 from infra.whatsapp_meta.adapter import WhatsAppMetaAdapter
-from infra.whatsapp_meta.client import send_meta_text_message
+from infra.whatsapp_meta.client import send_meta_text_message, send_typing_action
 from infra.whatsapp_meta.webhook import (
     validate_meta_signature,
     verify_meta_webhook_token,
@@ -103,6 +103,23 @@ async def receive_webhook(
 
     for inbound in inbound_messages:
         try:
+            phone_number_id = inbound.phone_number_id or WHATSAPP_META_PHONE_NUMBER_ID
+            if not phone_number_id:
+                errors.append(
+                    {
+                        "message_id": inbound.message_id,
+                        "error": "Missing phone_number_id in payload and settings",
+                    }
+                )
+                continue
+
+            await send_typing_action(
+                api_version=WHATSAPP_META_API_VERSION,
+                phone_number_id=phone_number_id,
+                access_token=WHATSAPP_META_ACCESS_TOKEN,
+                to=inbound.from_number,
+            )
+
             assist_request = adapter.to_assist_request(
                 inbound,
                 prompt_name=WHATSAPP_META_PROMPT_NAME,
@@ -113,16 +130,6 @@ async def receive_webhook(
             answer_text = adapter.extract_outbound_text(assist_response)
             if not answer_text:
                 answer_text = "Gracias por tu mensaje. En breve te ayudamos."
-
-            phone_number_id = inbound.phone_number_id or WHATSAPP_META_PHONE_NUMBER_ID
-            if not phone_number_id:
-                errors.append(
-                    {
-                        "message_id": inbound.message_id,
-                        "error": "Missing phone_number_id in payload and settings",
-                    }
-                )
-                continue
 
             await send_meta_text_message(
                 api_version=WHATSAPP_META_API_VERSION,

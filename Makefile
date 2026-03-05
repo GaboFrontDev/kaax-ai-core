@@ -23,7 +23,7 @@ SESSION_ID ?=
 	test lint fmt \
 	docker-up docker-down docker-logs docker-up-redis docker-test-postgres docker-test-redis \
 	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl \
-	session-clear
+	session-clear session-clear-all
 
 help:
 	@echo "Targets disponibles:"
@@ -41,6 +41,7 @@ help:
 	@echo "  make cdk-cancel         -> cancela un update de CloudFormation en progreso"
 	@echo "  make cdk-logs           -> sigue los logs del contenedor en ECS en tiempo real"
 	@echo "  make session-clear      -> elimina memoria/checkpoints de un sessionId (SESSION_ID=...)"
+	@echo "  make session-clear-all  -> borra TODOS los checkpoints de la BD"
 
 sync:
 	uv sync
@@ -166,3 +167,6 @@ awsctl:
 
 session-clear:
 	./ops/session-clear.sh "$(SESSION_ID)"
+
+session-clear-all:
+	./ops/session-clear-all.sh
