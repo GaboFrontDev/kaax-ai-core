@@ -113,12 +113,13 @@ async def receive_webhook(
                 )
                 continue
 
-            await send_typing_action(
-                api_version=WHATSAPP_META_API_VERSION,
-                phone_number_id=phone_number_id,
-                access_token=WHATSAPP_META_ACCESS_TOKEN,
-                to=inbound.from_number,
-            )
+            if inbound.message_id:
+                await send_typing_action(
+                    api_version=WHATSAPP_META_API_VERSION,
+                    phone_number_id=phone_number_id,
+                    access_token=WHATSAPP_META_ACCESS_TOKEN,
+                    message_id=inbound.message_id,
+                )
 
             assist_request = adapter.to_assist_request(
                 inbound,

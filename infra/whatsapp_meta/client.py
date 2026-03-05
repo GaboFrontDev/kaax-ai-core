@@ -12,15 +12,15 @@ async def send_typing_action(
     api_version: str,
     phone_number_id: str,
     access_token: str,
-    to: str,
+    message_id: str,
 ) -> None:
-    """Send a typing indicator to the user. Best-effort — errors are logged and ignored."""
+    """Mark message as read and show typing indicator. Best-effort — errors are logged and ignored."""
     url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
     payload = {
         "messaging_product": "whatsapp",
-        "to": to,
-        "type": "chat_action",
-        "chat_action": "typing_on",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {"type": "text"},
     }
     headers = {"Authorization": f"Bearer {access_token}"}
     try:
