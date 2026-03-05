@@ -7,9 +7,17 @@ from typing import Any, List, Optional
 from langchain.agents import create_agent
 
 from model_builder import get_model
+from multi_agent_supervisor import MultiAgentSupervisor
 from prompt_factory import PromptFactory
 from session_manager import SessionManager
-from settings import BEDROCK_MODEL, DEFAULT_PROMPT_NAME, DEFAULT_TEMPERATURE
+from settings import (
+    BEDROCK_MODEL,
+    DEFAULT_PROMPT_NAME,
+    DEFAULT_TEMPERATURE,
+    DEMO_LINK,
+    MULTI_AGENT_ENABLED,
+    PRICING_LINK,
+)
 from tools import conversation_loop_tool, simple_math_tool
 
 
@@ -59,13 +67,29 @@ def build_agent(
     prompt_factory: Optional[PromptFactory] = None,
     stores: Optional[dict] = None,
 ):
-    """Build and return a minimal LangChain/LangGraph agent."""
+    """Build and return a LangChain/LangGraph agent.
+
+    When MULTI_AGENT_ENABLED is True, returns a MultiAgentSupervisor instance
+    that routes each turn to the appropriate specialist agent.
+    When False, falls back to the original single-agent behaviour.
+    """
     if middleware is None:
         middleware = []
 
     if checkpointer is None:
         checkpointer = SessionManager()
 
+    # --- Multi-agent path ---
+    if MULTI_AGENT_ENABLED:
+        return MultiAgentSupervisor(
+            checkpointer=checkpointer,
+            model_name=model_name,
+            temperature=temperature,
+            demo_link=DEMO_LINK,
+            pricing_link=PRICING_LINK,
+        )
+
+    # --- Legacy single-agent fallback ---
     if tools is None:
         tools = build_tools(checkpointer=checkpointer, email=email, stores=stores)
 

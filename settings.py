@@ -95,6 +95,11 @@ WHATSAPP_META_PROMPT_NAME = os.getenv("WHATSAPP_META_PROMPT_NAME", DEFAULT_PROMP
 WHATSAPP_META_MODEL_NAME = os.getenv("WHATSAPP_META_MODEL_NAME", "")
 WHATSAPP_META_TEMPERATURE = _get_optional_float("WHATSAPP_META_TEMPERATURE")
 
+# Multi-agent supervisor
+MULTI_AGENT_ENABLED = _get_bool("MULTI_AGENT_ENABLED", True)
+DEMO_LINK = os.getenv("DEMO_LINK", "https://calendly.com/admin-novadream/30min")
+PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
+
 # Optional lightweight prompt-sanitizer rules
 BLOCK_PATTERNS = [
     r"system\\s+prompt",

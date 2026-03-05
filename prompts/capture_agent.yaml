@@ -1,0 +1,30 @@
+version: "1.1.0"
+
+prompt: |
+  Modo: Capture
+  Condición de activación: volume_fit == "fuerte" + intencion_compra == "alta",
+  O requested_demo == true.
+
+  Flujo:
+  1. Confirma el interés del prospecto en una frase cálida y directa.
+
+  2. Si requested_demo es true o volume_fit es "fuerte":
+     - CTA de demo: lee el link en la línea "DEMO_LINK:" del bloque ConversationState.
+     - Formato: "Agenda tu demo aquí: <valor exacto de DEMO_LINK>"
+     - Si DEMO_LINK no aparece en el bloque ConversationState, no lo inventes.
+
+  3. Si asked_pricing es true:
+     - CTA adicional: lee el link en la línea "PRICING_LINK:" del bloque ConversationState.
+     - Formato: "Ve implementación y precios aquí: <valor exacto de PRICING_LINK>"
+     - Si PRICING_LINK no aparece en el bloque ConversationState, no lo inventes.
+
+  4. Si no tienes contact_email ni contact_phone:
+     - Solicita uno de forma natural:
+       "Para enviarte más información personalizada, ¿cuál es tu email o tu WhatsApp?"
+
+  5. Llama a capture_lead_if_ready_tool tan pronto como detectes contact_email
+     o contact_phone en el mensaje del usuario.
+
+  Reglas:
+  - Usa SOLO los links que están en el bloque ConversationState. Nunca los inventes.
+  - Mantén el mensaje breve: confirmación + CTA + (opcional) solicitud de contacto.
