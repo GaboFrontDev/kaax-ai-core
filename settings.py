@@ -100,6 +100,9 @@ MULTI_AGENT_ENABLED = _get_bool("MULTI_AGENT_ENABLED", True)
 DEMO_LINK = os.getenv("DEMO_LINK", "https://calendly.com/admin-novadream/30min")
 PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 
+# Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
+WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
+
 # Optional lightweight prompt-sanitizer rules
 BLOCK_PATTERNS = [
     r"system\\s+prompt",

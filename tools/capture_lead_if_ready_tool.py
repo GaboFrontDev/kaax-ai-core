@@ -2,6 +2,9 @@
 
 Called when contact data (email/phone) appears in user text, or when the user
 explicitly requests the next commercial step (demo, pricing, etc.).
+
+If WHATSAPP_NOTIFY_TO is set, sends a WhatsApp notification to that number
+whenever a lead with contact data or explicit commercial intent is detected.
 """
 
 from __future__ import annotations
@@ -12,10 +15,64 @@ import re
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from settings import (
+    WHATSAPP_META_ACCESS_TOKEN,
+    WHATSAPP_META_API_VERSION,
+    WHATSAPP_META_PHONE_NUMBER_ID,
+    WHATSAPP_NOTIFY_TO,
+)
+
 logger = logging.getLogger(__name__)
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 _PHONE_RE = re.compile(r"\b(\+?\d[\d\s\-]{7,}\d)\b")
+
+
+def _build_notification(
+    contact_email: str | None,
+    contact_phone: str | None,
+    requested_demo: bool,
+    asked_pricing: bool,
+    next_action: str,
+    user_text: str,
+) -> str:
+    lines = ["🔔 *Nuevo lead capturado — Kaax AI*"]
+    if contact_email:
+        lines.append(f"📧 Email: {contact_email}")
+    if contact_phone:
+        lines.append(f"📱 Teléfono: {contact_phone}")
+    if requested_demo:
+        lines.append("✅ Solicitó demo")
+    if asked_pricing:
+        lines.append("💰 Preguntó por precios/planes")
+    lines.append(f"➡️ Acción: {next_action}")
+    if user_text:
+        snippet = user_text[:120] + ("…" if len(user_text) > 120 else "")
+        lines.append(f'💬 Último mensaje: "{snippet}"')
+    return "\n".join(lines)
+
+
+async def _notify(message: str) -> None:
+    """Send a WhatsApp notification to WHATSAPP_NOTIFY_TO. Silently skips if not configured."""
+    if not WHATSAPP_NOTIFY_TO:
+        return
+    if not WHATSAPP_META_ACCESS_TOKEN or not WHATSAPP_META_PHONE_NUMBER_ID:
+        logger.warning("capture_lead: WHATSAPP_NOTIFY_TO set but Meta credentials missing")
+        return
+
+    try:
+        from infra.whatsapp_meta.client import send_meta_text_message
+
+        await send_meta_text_message(
+            api_version=WHATSAPP_META_API_VERSION,
+            phone_number_id=WHATSAPP_META_PHONE_NUMBER_ID,
+            access_token=WHATSAPP_META_ACCESS_TOKEN,
+            to=WHATSAPP_NOTIFY_TO,
+            text=message,
+        )
+        logger.info("Lead notification sent to %s", WHATSAPP_NOTIFY_TO)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Failed to send lead notification: %s", exc)
 
 
 class CaptureLeadInput(BaseModel):
@@ -58,15 +115,6 @@ async def capture_lead_if_ready_tool(
     has_contact = bool(contact_email or contact_phone)
     is_ready = has_contact or requested_demo or asked_pricing
 
-    if is_ready:
-        logger.info(
-            "Lead capture triggered | has_email=%s has_phone=%s demo=%s pricing=%s",
-            bool(contact_email),
-            bool(contact_phone),
-            requested_demo,
-            asked_pricing,
-        )
-
     if not is_ready:
         next_action = "not_ready"
     elif has_contact:
@@ -77,6 +125,20 @@ async def capture_lead_if_ready_tool(
         next_action = "send_pricing_link"
     else:
         next_action = "request_contact"
+
+    if is_ready:
+        logger.info(
+            "Lead capture triggered | has_email=%s has_phone=%s demo=%s pricing=%s action=%s",
+            bool(contact_email),
+            bool(contact_phone),
+            requested_demo,
+            asked_pricing,
+            next_action,
+        )
+        notification = _build_notification(
+            contact_email, contact_phone, requested_demo, asked_pricing, next_action, user_text
+        )
+        await _notify(notification)
 
     return {
         "captured": is_ready,
