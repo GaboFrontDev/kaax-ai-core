@@ -62,9 +62,13 @@ async def run_live_transcription(
                         continue
 
                     alts = data.get("channel", {}).get("alternatives", [])
-                    transcript = alts[0].get("transcript", "").strip() if alts else ""
-                    if transcript:
-                        logger.info("deepgram_live final=%r", transcript[:80])
+                    if not alts:
+                        continue
+                    transcript = alts[0].get("transcript", "").strip()
+                    confidence = alts[0].get("confidence", 0.0)
+                    # Ignore noise: require at least 2 words and 70% confidence
+                    if transcript and confidence >= 0.7 and len(transcript.split()) >= 2:
+                        logger.info("deepgram_live final=%r confidence=%.2f", transcript[:80], confidence)
                         await on_final(transcript)
 
             await asyncio.gather(_send_audio(), _receive_transcripts())

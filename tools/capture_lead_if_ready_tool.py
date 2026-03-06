@@ -16,6 +16,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from settings import (
+    DEMO_LINK,
     WHATSAPP_META_ACCESS_TOKEN,
     WHATSAPP_META_API_VERSION,
     WHATSAPP_META_PHONE_NUMBER_ID,
@@ -52,6 +53,27 @@ def _build_notification(
     return "\n".join(lines)
 
 
+async def _send_demo_link(phone: str) -> None:
+    """Send the demo link via WhatsApp to a voice caller."""
+    if not WHATSAPP_META_ACCESS_TOKEN or not WHATSAPP_META_PHONE_NUMBER_ID:
+        logger.warning("capture_lead: cannot send demo link, Meta credentials missing")
+        return
+    try:
+        from infra.whatsapp_meta.client import send_meta_text_message
+
+        message = f"¡Hola! Aquí está el link para agendar tu demo con Kaax AI:\n{DEMO_LINK}"
+        await send_meta_text_message(
+            api_version=WHATSAPP_META_API_VERSION,
+            phone_number_id=WHATSAPP_META_PHONE_NUMBER_ID,
+            access_token=WHATSAPP_META_ACCESS_TOKEN,
+            to=phone,
+            text=message,
+        )
+        logger.info("Demo link sent via WhatsApp to %s", phone)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Failed to send demo link to %s: %s", phone, exc)
+
+
 async def _notify(message: str) -> None:
     """Send a WhatsApp notification to WHATSAPP_NOTIFY_TO. Silently skips if not configured."""
     if not WHATSAPP_NOTIFY_TO:
@@ -81,6 +103,10 @@ class CaptureLeadInput(BaseModel):
     contact_phone: str | None = Field(default=None, description="Detected phone number.")
     requested_demo: bool = Field(default=False, description="User explicitly requested a demo.")
     asked_pricing: bool = Field(default=False, description="User asked about pricing.")
+    caller_phone: str | None = Field(
+        default=None,
+        description="Phone number of the caller on a voice call. Pass this when handling a voice call so the demo link can be sent via WhatsApp.",
+    )
 
 
 @tool(args_schema=CaptureLeadInput)
@@ -90,6 +116,7 @@ async def capture_lead_if_ready_tool(
     contact_phone: str | None = None,
     requested_demo: bool = False,
     asked_pricing: bool = False,
+    caller_phone: str | None = None,
 ) -> dict:
     """Capture lead data when the conversation is ready for commercial handoff.
 
@@ -139,6 +166,10 @@ async def capture_lead_if_ready_tool(
             contact_email, contact_phone, requested_demo, asked_pricing, next_action, user_text
         )
         await _notify(notification)
+
+        # Voice call: send demo link directly to caller via WhatsApp
+        if requested_demo and caller_phone and DEMO_LINK:
+            await _send_demo_link(caller_phone)
 
     return {
         "captured": is_ready,

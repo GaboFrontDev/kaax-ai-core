@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json as _json
 import logging
+from random import random
 import re
 import time
 
@@ -23,7 +24,7 @@ from fastapi import APIRouter, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
 from api.dependencies import get_agent_service_from_cache
-from api.handlers import process_request
+from api.handlers import stream_voice_sentences
 from infra.twilio_voice.adapter import TwilioVoiceAdapter, TwilioVoiceCall
 from infra.twilio_voice.deepgram_live import run_live_transcription
 from infra.twilio_voice.deepgram_client import synthesize_stream
@@ -51,6 +52,7 @@ from settings import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+global _filler_mulaw
 
 _TWIML = "application/xml"
 _HANDOFF_TRIGGERS = ("transferir", "agente humano", "hablar con una persona", "escalar")
@@ -59,6 +61,10 @@ _FAREWELL_TRIGGERS = ("adiós", "adios", "hasta luego", "hasta pronto", "chao", 
 # Per-call metadata: {call_sid: {"from": str, "to": str}}
 # Survives WebSocket reconnections within the same call.
 _call_meta: dict[str, dict] = {}
+
+# Filler audio cached as raw mulaw bytes (generated once on first call)
+_filler_mulaw: bytes | None = None
+_filler_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -114,16 +120,67 @@ def _clean_for_voice(text: str) -> str:
     return " ".join(sentences[:2]).strip()
 
 
-async def _stream_tts(text: str, websocket: WebSocket, stream_sid: str) -> None:
-    """Stream Deepgram TTS mulaw chunks directly to Twilio via WebSocket."""
-    # Clear any audio currently playing on the call
-    await websocket.send_text(_json.dumps({"event": "clear", "streamSid": stream_sid}))
-    async for chunk in synthesize_stream(_clean_for_voice(text), DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
+async def _send_mulaw(data: bytes, websocket: WebSocket, stream_sid: str) -> None:
+    """Send raw mulaw bytes to Twilio in 320-byte chunks."""
+    for i in range(0, len(data), 320):
+        await websocket.send_text(_json.dumps({
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {"payload": base64.b64encode(data[i : i + 320]).decode()},
+        }))
+
+
+async def _stream_sentence(text: str, websocket: WebSocket, stream_sid: str) -> None:
+    """Stream one TTS sentence directly to Twilio (no clear)."""
+    async for chunk in synthesize_stream(text, DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
         await websocket.send_text(_json.dumps({
             "event": "media",
             "streamSid": stream_sid,
             "media": {"payload": base64.b64encode(chunk).decode()},
         }))
+
+
+async def _clear(websocket: WebSocket, stream_sid: str) -> None:
+    await websocket.send_text(_json.dumps({"event": "clear", "streamSid": stream_sid}))
+
+def randomly_select_filler() -> str:
+    """Randomly select a filler text from a predefined list.
+        Avoid repetition and keep the conversation engaging for the user while waiting for the agent's response.
+        
+    """
+    fillers = [
+        "Ok",
+        "Vale",
+        "Ah, entiendo",
+        "Listo",
+        "Gracias",
+    ]
+    new = random.choice(fillers)
+    while new == _filler_mulaw:
+        new = randomly_select_filler()  # Avoid repeating the same filler
+    _filler_mulaw = new
+    return new
+
+async def _get_filler_audio() -> bytes | None:
+    """Return cached mulaw filler audio, generating it once on first call."""
+    global _filler_mulaw
+    if _filler_mulaw is not None:
+        return _filler_mulaw
+    if not DEEPGRAM_API_KEY:
+        return None
+    async with _filler_lock:
+        if _filler_mulaw is not None:
+            return _filler_mulaw
+        try:
+            chunks: list[bytes] = []
+            async for chunk in synthesize_stream(randomly_select_filler(), DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
+                chunks.append(chunk)
+            _filler_mulaw = b"".join(chunks)
+            logger.info("voice_filler cached %d bytes", len(_filler_mulaw))
+        except Exception:  # pylint: disable=broad-except
+            logger.error("voice_filler generation error", exc_info=True)
+            logger.warning("voice_filler generation failed")
+    return _filler_mulaw
 
 
 # ---------------------------------------------------------------------------
@@ -203,40 +260,70 @@ async def voice_stream(websocket: WebSocket):
                     model_name=TWILIO_VOICE_MODEL_NAME or None,
                     temperature=TWILIO_VOICE_TEMPERATURE,
                 )
-                assist_response = await process_request(assist_request, agent_svc)
-                answer_text = adapter.extract_outbound_text(assist_response)
-                t1 = time.perf_counter()
+
+                # 1. Send filler immediately so user hears something while LLM thinks
+                filler = await _get_filler_audio()
+                if filler:
+                    await _send_mulaw(filler, websocket, stream_sid)
+
+                # 2. Stream agent sentences → TTS concurrently
+                sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()
+                collected: list[str] = []
+
+                async def _collect() -> None:
+                    try:
+                        async for sentence in stream_voice_sentences(assist_request, agent_svc):
+                            await sentence_queue.put(sentence)
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception("voice_stream collect error call_sid=%s", call_sid)
+                    finally:
+                        await sentence_queue.put(None)
+
+                async def _play() -> None:
+                    first = True
+                    while True:
+                        sentence = await sentence_queue.get()
+                        if sentence is None:
+                            break
+                        clean = _clean_for_voice(sentence)
+                        if not clean:
+                            continue
+                        collected.append(clean)
+                        if first:
+                            # Clear filler before first real audio
+                            await _clear(websocket, stream_sid)
+                            logger.info(
+                                "voice_stream first_audio t=%.2fs sentence=%r call_sid=%s",
+                                time.perf_counter() - t0, clean[:60], call_sid,
+                            )
+                            first = False
+                        await _stream_sentence(clean, websocket, stream_sid)
+
+                await asyncio.gather(_collect(), _play())
+
+                full_response = " ".join(collected)
                 logger.info(
-                    "voice_stream step=agent t=%.2fs response=%r tools=%s call_sid=%s",
-                    t1 - t0, answer_text[:80], assist_response.tools_used, call_sid,
+                    "voice_stream step=total t=%.2fs response=%r call_sid=%s",
+                    time.perf_counter() - t0, full_response[:80], call_sid,
                 )
 
-                if not answer_text:
-                    answer_text = "Un momento, ¿puedes repetirme tu consulta?"
+                if not full_response:
+                    await _stream_sentence("Un momento, ¿puedes repetirme tu consulta?", websocket, stream_sid)
+                    return
 
-                # Handoff — still needs REST update to transfer the call
-                if _needs_handoff(answer_text) and TWILIO_VOICE_HANDOFF_NUMBER:
+                # Handoff
+                if _needs_handoff(full_response) and TWILIO_VOICE_HANDOFF_NUMBER:
                     logger.info("voice_stream handoff call_sid=%s", call_sid)
-                    await _stream_tts(answer_text, websocket, stream_sid)
                     twiml = transfer_response(TWILIO_VOICE_HANDOFF_NUMBER)
                     await update_call_twiml(TWILIO_ACCOUNT_SID, TWILIO_VOICE_AUTH_TOKEN, call_sid, twiml)
                     return
 
-                # Hangup — stream farewell then hang up via REST
-                if _needs_hangup(transcript) or _needs_hangup(answer_text):
+                # Hangup
+                if _needs_hangup(transcript) or _needs_hangup(full_response):
                     logger.info("voice_stream hangup call_sid=%s", call_sid)
-                    await _stream_tts(answer_text, websocket, stream_sid)
                     twiml = hangup_response("")
                     await update_call_twiml(TWILIO_ACCOUNT_SID, TWILIO_VOICE_AUTH_TOKEN, call_sid, twiml)
                     _call_meta.pop(call_sid, None)
-                    return
-
-                # Stream TTS audio directly to Twilio via WebSocket
-                await _stream_tts(answer_text, websocket, stream_sid)
-                logger.info(
-                    "voice_stream step=total t=%.2fs call_sid=%s",
-                    time.perf_counter() - t0, call_sid,
-                )
 
             except Exception:  # pylint: disable=broad-except
                 logger.exception("voice_stream handle_transcript error call_sid=%s", call_sid)
@@ -264,9 +351,14 @@ async def voice_stream(websocket: WebSocket):
                     )
                 )
 
+                # Pre-warm filler audio cache
+                asyncio.ensure_future(_get_filler_audio())
+
                 # Stream greeting directly to caller
                 if TWILIO_VOICE_GREETING and DEEPGRAM_API_KEY:
-                    asyncio.ensure_future(_stream_tts(TWILIO_VOICE_GREETING, websocket, stream_sid))
+                    asyncio.ensure_future(_stream_sentence(
+                        _clean_for_voice(TWILIO_VOICE_GREETING), websocket, stream_sid
+                    ))
 
             elif event == "media":
                 chunk = base64.b64decode(data["media"]["payload"])

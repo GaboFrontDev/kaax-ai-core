@@ -171,7 +171,10 @@ def _build_config(
         "configurable": {"thread_id": session_id},
         "tool_choice": request.toolChoice or "auto",
         "callbacks": [callback_handler],
-        "metadata": {"user_email": request.requestor},
+        "metadata": {
+            "user_email": request.requestor,
+            "system_context": request.systemContext or "",
+        },
     }
 
 
@@ -202,6 +205,69 @@ async def process_request(
         conversation_id=session_id,
         run_id=callback_handler.root_run_id,
     )
+
+
+async def stream_voice_sentences(
+    request: AgentAssistRequest,
+    agent_service,
+) -> AsyncGenerator[str, None]:
+    """
+    Stream the agent response one sentence at a time for voice TTS pipelining.
+
+    Yields each complete sentence (ending in .!?) as the LLM generates it,
+    without waiting for the full response. This lets TTS start on sentence 1
+    while the LLM is still generating sentence 2.
+    """
+    callback_handler = APICallbackHandler()
+    agent = agent_service.create_agent_for_request(request, callback_handler)
+    session_id = request.sessionId or f"core-api-{int(time.time())}"
+    config = _build_config(request, callback_handler, session_id)
+    await repair_dangling_tool_calls(agent, config, session_id)
+
+    buffer = ""
+    thinking_state = {"inside_thinking": False, "carry": ""}
+
+    async for event in agent.astream_events(
+        {"messages": [HumanMessage(content=request.userText)]},
+        config=config,
+        version="v2",
+    ):
+        if event["event"] != "on_chat_model_stream":
+            continue
+
+        chunk = event["data"]["chunk"]
+        content = ""
+        if isinstance(chunk, AIMessageChunk):
+            if isinstance(chunk.content, str):
+                content = chunk.content
+            elif isinstance(chunk.content, list):
+                parts: list[str] = []
+                for block in chunk.content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if isinstance(text, str):
+                            parts.append(text)
+                content = "".join(parts)
+
+        content = _filter_thinking_stream_text(content, thinking_state)
+        if not content:
+            continue
+        buffer += content
+
+        # Yield each complete sentence as soon as its boundary is detected
+        while True:
+            match = re.search(r"(?<=[.!?])\s+", buffer)
+            if not match:
+                break
+            sentence = buffer[: match.start() + 1].strip()
+            buffer = buffer[match.end() :]
+            if sentence:
+                yield sentence
+
+    # Yield any remaining text that didn't end with punctuation
+    remaining = (buffer + thinking_state.get("carry", "")).strip()
+    if remaining:
+        yield remaining
 
 
 async def stream_request(

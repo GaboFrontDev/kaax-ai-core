@@ -216,15 +216,17 @@ class MultiAgentSupervisor:
         state: ConversationState,
         route: str,
         turn_mode: str,
+        system_context: str = "",
     ) -> str:
         base = self._pf.load_prompt("shared_base")
         specialist = self._pf.load_prompt(_SPECIALIST_PROMPT_NAMES[route])
         summary = state_summary_block(state, self.demo_link, self.pricing_link)
         turn_instruction = _TURN_MODE_INSTRUCTIONS[turn_mode]
 
-        return "\n\n".join(
-            [self._tool_policy_block(), base, specialist, turn_instruction, summary]
-        )
+        parts = [self._tool_policy_block(), base, specialist, turn_instruction, summary]
+        if system_context:
+            parts.append(system_context)
+        return "\n\n".join(parts)
 
     def _select_route(self, state: ConversationState, latest_text: str) -> str:
         force_knowledge = state.asked_pricing and not is_identity_question(latest_text)
@@ -262,6 +264,7 @@ class MultiAgentSupervisor:
         self,
         all_messages: List[BaseMessage],
         latest_text: str,
+        system_context: str = "",
     ) -> Any:
         """Build a specialist agent for a single turn."""
         state = _rebuild_state(all_messages)
@@ -271,7 +274,7 @@ class MultiAgentSupervisor:
         )
         turn_mode = _detect_turn_mode(latest_text, prior_human_count)
         route = self._select_route(state, latest_text)
-        system_prompt = self._compose_system_prompt(state, route, turn_mode)
+        system_prompt = self._compose_system_prompt(state, route, turn_mode, system_context)
 
         logger.info(
             "Supervisor | route=%s turn_mode=%s etapa=%s vfit=%s intent=%s "
@@ -306,7 +309,8 @@ class MultiAgentSupervisor:
         existing = await self._load_existing_messages(config)
         new_messages: List[BaseMessage] = input.get("messages", [])
         latest_text = _extract_latest_text(new_messages)
-        specialist = self._build_specialist_agent(existing + new_messages, latest_text)
+        system_context = (config or {}).get("metadata", {}).get("system_context", "")
+        specialist = self._build_specialist_agent(existing + new_messages, latest_text, system_context)
         return await specialist.ainvoke(input, config, **kwargs)
 
     async def astream_events(
@@ -319,6 +323,7 @@ class MultiAgentSupervisor:
         existing = await self._load_existing_messages(config)
         new_messages: List[BaseMessage] = input.get("messages", [])
         latest_text = _extract_latest_text(new_messages)
-        specialist = self._build_specialist_agent(existing + new_messages, latest_text)
+        system_context = (config or {}).get("metadata", {}).get("system_context", "")
+        specialist = self._build_specialist_agent(existing + new_messages, latest_text, system_context)
         async for event in specialist.astream_events(input, config, **kwargs):
             yield event
