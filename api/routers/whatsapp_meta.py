@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import Any
+from collections import deque
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 
 from api.agent_service import AgentService
@@ -33,6 +34,29 @@ from settings import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Per-session lock: serializes concurrent messages from the same user.
+_session_locks: dict[str, asyncio.Lock] = {}
+# Deduplication ring buffer: bounded to avoid unbounded memory growth.
+_seen_message_ids: deque[str] = deque(maxlen=2000)
+_seen_message_ids_set: set[str] = set()
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    if session_id not in _session_locks:
+        _session_locks[session_id] = asyncio.Lock()
+    return _session_locks[session_id]
+
+
+def _is_duplicate(message_id: str) -> bool:
+    if message_id in _seen_message_ids_set:
+        return True
+    # Evict oldest entry when buffer is full
+    if len(_seen_message_ids) == _seen_message_ids.maxlen:
+        _seen_message_ids_set.discard(_seen_message_ids[0])
+    _seen_message_ids.append(message_id)
+    _seen_message_ids_set.add(message_id)
+    return False
 
 
 @router.get("/api/channels/whatsapp/meta/webhook", response_class=PlainTextResponse)
@@ -63,10 +87,60 @@ async def verify_webhook(
     return hub_challenge
 
 
+async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None:
+    """Process one inbound message, serialized per session via lock."""
+    phone_number_id = inbound.phone_number_id or WHATSAPP_META_PHONE_NUMBER_ID
+    if not phone_number_id:
+        logger.error("whatsapp_meta missing phone_number_id message_id=%s", inbound.message_id)
+        return
+
+    assist_request = adapter.to_assist_request(
+        inbound,
+        prompt_name=WHATSAPP_META_PROMPT_NAME,
+        model_name=WHATSAPP_META_MODEL_NAME,
+        temperature=WHATSAPP_META_TEMPERATURE,
+    )
+    session_id = assist_request.sessionId or inbound.from_number
+
+    lock = _session_lock(session_id)
+    async with lock:
+        try:
+            logger.info(
+                "whatsapp_meta processing message_id=%s from=%s session=%s",
+                inbound.message_id, inbound.from_number, session_id,
+            )
+            if inbound.message_id:
+                await send_typing_action(
+                    api_version=WHATSAPP_META_API_VERSION,
+                    phone_number_id=phone_number_id,
+                    access_token=WHATSAPP_META_ACCESS_TOKEN,
+                    message_id=inbound.message_id,
+                )
+
+            assist_response = await process_request(assist_request, agent_service)
+            answer_text = adapter.extract_outbound_text(assist_response)
+            if not answer_text:
+                answer_text = "Gracias por tu mensaje. En breve te ayudamos."
+
+            await send_meta_text_message(
+                api_version=WHATSAPP_META_API_VERSION,
+                phone_number_id=phone_number_id,
+                access_token=WHATSAPP_META_ACCESS_TOKEN,
+                to=inbound.from_number,
+                text=answer_text,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "whatsapp_meta_processing_error message_id=%s session=%s",
+                inbound.message_id, session_id,
+            )
+
+
 @router.post("/api/channels/whatsapp/meta/webhook")
 @router.post("/webhooks/whatsapp/meta")
 async def receive_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     agent_service: AgentService = Depends(get_agent_service),
 ):
     if not WHATSAPP_META_ACCESS_TOKEN:
@@ -104,57 +178,17 @@ async def receive_webhook(
     inbound_messages = adapter.extract_inbound_messages(payload)
 
     if not inbound_messages:
-        return {"status": "ignored", "processed": 0, "errors": []}
+        return {"status": "ignored"}
 
-    processed = 0
-    errors: list[dict[str, Any]] = []
-
+    queued = 0
     for inbound in inbound_messages:
-        try:
-            phone_number_id = inbound.phone_number_id or WHATSAPP_META_PHONE_NUMBER_ID
-            if not phone_number_id:
-                errors.append(
-                    {
-                        "message_id": inbound.message_id,
-                        "error": "Missing phone_number_id in payload and settings",
-                    }
-                )
-                continue
+        # Deduplicate: Meta retries webhooks on timeout
+        if inbound.message_id and _is_duplicate(inbound.message_id):
+            logger.info("whatsapp_meta duplicate message_id=%s skipped", inbound.message_id)
+            continue
 
-            if inbound.message_id:
-                await send_typing_action(
-                    api_version=WHATSAPP_META_API_VERSION,
-                    phone_number_id=phone_number_id,
-                    access_token=WHATSAPP_META_ACCESS_TOKEN,
-                    message_id=inbound.message_id,
-                )
+        # Schedule background processing — returns 200 to Meta immediately
+        background_tasks.add_task(_handle_inbound, inbound, agent_service, adapter)
+        queued += 1
 
-            assist_request = adapter.to_assist_request(
-                inbound,
-                prompt_name=WHATSAPP_META_PROMPT_NAME,
-                model_name=WHATSAPP_META_MODEL_NAME,
-                temperature=WHATSAPP_META_TEMPERATURE,
-            )
-            assist_response = await process_request(assist_request, agent_service)
-            answer_text = adapter.extract_outbound_text(assist_response)
-            if not answer_text:
-                answer_text = "Gracias por tu mensaje. En breve te ayudamos."
-
-            await send_meta_text_message(
-                api_version=WHATSAPP_META_API_VERSION,
-                phone_number_id=phone_number_id,
-                access_token=WHATSAPP_META_ACCESS_TOKEN,
-                to=inbound.from_number,
-                text=answer_text,
-            )
-            processed += 1
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("whatsapp_meta_processing_error")
-            errors.append({"message_id": inbound.message_id, "error": str(exc)})
-
-    return {
-        "status": "ok",
-        "received": len(inbound_messages),
-        "processed": processed,
-        "errors": errors,
-    }
+    return {"status": "ok", "queued": queued}
