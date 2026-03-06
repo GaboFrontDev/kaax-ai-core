@@ -29,6 +29,13 @@ _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 _PHONE_RE = re.compile(r"\b(\+?\d[\d\s\-]{7,}\d)\b")
 
 
+_CHANNEL_LABELS = {
+    "whatsapp": "WhatsApp",
+    "voice": "Llamada telefónica",
+    "web": "Web",
+}
+
+
 def _build_notification(
     contact_email: str | None,
     contact_phone: str | None,
@@ -36,12 +43,23 @@ def _build_notification(
     asked_pricing: bool,
     next_action: str,
     user_text: str,
+    channel: str | None = None,
+    caller_phone: str | None = None,
+    contact_name: str | None = None,
 ) -> str:
     lines = ["🔔 *Nuevo lead capturado — Kaax AI*"]
+    if channel:
+        label = _CHANNEL_LABELS.get(channel.lower(), channel)
+        lines.append(f"📡 Canal: {label}")
+    source_number = caller_phone or contact_phone
+    if source_number:
+        lines.append(f"📞 Número: {source_number}")
+    if contact_name:
+        lines.append(f"👤 Nombre: {contact_name}")
     if contact_email:
         lines.append(f"📧 Email: {contact_email}")
-    if contact_phone:
-        lines.append(f"📱 Teléfono: {contact_phone}")
+    if contact_phone and contact_phone != source_number:
+        lines.append(f"📱 Teléfono alternativo: {contact_phone}")
     if requested_demo:
         lines.append("✅ Solicitó demo")
     if asked_pricing:
@@ -107,6 +125,14 @@ class CaptureLeadInput(BaseModel):
         default=None,
         description="Phone number of the caller on a voice call. Pass this when handling a voice call so the demo link can be sent via WhatsApp.",
     )
+    channel: str | None = Field(
+        default=None,
+        description="Channel where the conversation happened. Use 'whatsapp' for WhatsApp, 'voice' for phone calls.",
+    )
+    contact_name: str | None = Field(
+        default=None,
+        description="Name of the user if they mentioned it during the conversation.",
+    )
 
 
 @tool(args_schema=CaptureLeadInput)
@@ -117,6 +143,8 @@ async def capture_lead_if_ready_tool(
     requested_demo: bool = False,
     asked_pricing: bool = False,
     caller_phone: str | None = None,
+    channel: str | None = None,
+    contact_name: str | None = None,
 ) -> dict:
     """Capture lead data when the conversation is ready for commercial handoff.
 
@@ -163,7 +191,8 @@ async def capture_lead_if_ready_tool(
             next_action,
         )
         notification = _build_notification(
-            contact_email, contact_phone, requested_demo, asked_pricing, next_action, user_text
+            contact_email, contact_phone, requested_demo, asked_pricing, next_action, user_text,
+            channel=channel, caller_phone=caller_phone, contact_name=contact_name,
         )
         await _notify(notification)
 

@@ -43,13 +43,14 @@ class TwilioVoiceAdapter:
     def _voice_context(call: "TwilioVoiceCall") -> str:
         return (
             f"CONTEXTO DE LLAMADA:\n"
-            f"- Canal: llamada telefónica (voz)\n"
-            f"- Número del llamante: {call.from_number}\n"
+            f"- Canal: llamada telefónica (voz). Usa channel='voice' al llamar capture_lead_if_ready_tool.\n"
+            f"- Número del llamante: {call.from_number}. Usa caller_phone='{call.from_number}'.\n"
             f"- El usuario NO puede hacer clic en links durante la llamada.\n"
             f"- Si el usuario pide demo o un link, dile que se lo enviarás por WhatsApp.\n"
             f"- Si necesitas su número de contacto, pregunta: "
             f"'¿Quieres que te contactemos al número desde el que estás llamando?' "
-            f"Si confirma, usa {call.from_number} como contact_phone al llamar capture_lead_if_ready_tool."
+            f"Si confirma, usa contact_phone='{call.from_number}'.\n"
+            f"- Si el usuario menciona su nombre, pásalo como contact_name al llamar capture_lead_if_ready_tool."
         )
 
     def extract_outbound_text(self, response: AgentAssistResponse) -> str:

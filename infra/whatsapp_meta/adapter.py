@@ -75,6 +75,12 @@ class WhatsAppMetaAdapter:
             promptName=prompt_name,
             modelName=model_name,
             temperature=temperature,
+            systemContext=(
+                f"CONTEXTO DEL CANAL:\n"
+                f"- Canal: WhatsApp. Usa channel='whatsapp' al llamar capture_lead_if_ready_tool.\n"
+                f"- Número del usuario: {message.from_number}. Usa contact_phone='{message.from_number}' si el usuario confirma usarlo.\n"
+                f"- Si el usuario menciona su nombre, pásalo como contact_name al llamar capture_lead_if_ready_tool."
+            ),
         )
 
     def extract_outbound_text(self, response: AgentAssistResponse | dict[str, Any] | str) -> str:

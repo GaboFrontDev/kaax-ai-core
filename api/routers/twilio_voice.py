@@ -16,7 +16,7 @@ import asyncio
 import base64
 import json as _json
 import logging
-from random import random
+import random
 import re
 import time
 
@@ -52,8 +52,6 @@ from settings import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-global _filler_mulaw
-
 _TWIML = "application/xml"
 _HANDOFF_TRIGGERS = ("transferir", "agente humano", "hablar con una persona", "escalar")
 _FAREWELL_TRIGGERS = ("adiós", "adios", "hasta luego", "hasta pronto", "chao", "chau", "bye", "gracias por todo", "eso es todo", "no necesito más", "no necesito mas")
@@ -63,8 +61,11 @@ _FAREWELL_TRIGGERS = ("adiós", "adios", "hasta luego", "hasta pronto", "chao", 
 _call_meta: dict[str, dict] = {}
 
 # Filler audio cached as raw mulaw bytes (generated once on first call)
-_filler_mulaw: bytes | None = None
+_filler_cache: dict[str, bytes] = {}  # text → mulaw bytes
 _filler_lock = asyncio.Lock()
+_last_filler: str = ""
+
+_FILLERS = ["Ok.", "Vale.", "Ah, entiendo.", "Listo.", "Claro."]
 
 
 # ---------------------------------------------------------------------------
@@ -143,44 +144,35 @@ async def _stream_sentence(text: str, websocket: WebSocket, stream_sid: str) -> 
 async def _clear(websocket: WebSocket, stream_sid: str) -> None:
     await websocket.send_text(_json.dumps({"event": "clear", "streamSid": stream_sid}))
 
-def randomly_select_filler() -> str:
-    """Randomly select a filler text from a predefined list.
-        Avoid repetition and keep the conversation engaging for the user while waiting for the agent's response.
-        
-    """
-    fillers = [
-        "Ok",
-        "Vale",
-        "Ah, entiendo",
-        "Listo",
-        "Gracias",
-    ]
-    new = random.choice(fillers)
-    while new == _filler_mulaw:
-        new = randomly_select_filler()  # Avoid repeating the same filler
-    _filler_mulaw = new
-    return new
+def _pick_filler() -> str:
+    """Pick a random filler that differs from the last one used."""
+    global _last_filler
+    choices = [f for f in _FILLERS if f != _last_filler] or _FILLERS
+    text = random.choice(choices)
+    _last_filler = text
+    return text
+
 
 async def _get_filler_audio() -> bytes | None:
-    """Return cached mulaw filler audio, generating it once on first call."""
-    global _filler_mulaw
-    if _filler_mulaw is not None:
-        return _filler_mulaw
+    """Return mulaw bytes for a random filler, caching each phrase."""
     if not DEEPGRAM_API_KEY:
         return None
+    text = _pick_filler()
+    if text in _filler_cache:
+        return _filler_cache[text]
     async with _filler_lock:
-        if _filler_mulaw is not None:
-            return _filler_mulaw
+        if text in _filler_cache:
+            return _filler_cache[text]
         try:
             chunks: list[bytes] = []
-            async for chunk in synthesize_stream(randomly_select_filler(), DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
+            async for chunk in synthesize_stream(text, DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
                 chunks.append(chunk)
-            _filler_mulaw = b"".join(chunks)
-            logger.info("voice_filler cached %d bytes", len(_filler_mulaw))
+            _filler_cache[text] = b"".join(chunks)
+            logger.info("voice_filler cached %r %d bytes", text, len(_filler_cache[text]))
         except Exception:  # pylint: disable=broad-except
-            logger.error("voice_filler generation error", exc_info=True)
             logger.warning("voice_filler generation failed")
-    return _filler_mulaw
+            return None
+    return _filler_cache[text]
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +343,9 @@ async def voice_stream(websocket: WebSocket):
                     )
                 )
 
-                # Pre-warm filler audio cache
-                asyncio.ensure_future(_get_filler_audio())
+                # Pre-warm all filler phrases so first turn has zero TTS wait
+                for _f in _FILLERS:
+                    asyncio.ensure_future(_get_filler_audio())
 
                 # Stream greeting directly to caller
                 if TWILIO_VOICE_GREETING and DEEPGRAM_API_KEY:
