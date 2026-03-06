@@ -1,36 +1,38 @@
-"""Twilio Voice webhook router — Deepgram STT + TTS edition.
+"""Twilio Voice webhook router — Media Streams + Deepgram live STT + streaming TTS.
 
-Flow per call turn:
-  1. /webhooks/voice/incoming  → <Say> greeting + <Record action=/webhooks/voice/transcribe>
-  2. /webhooks/voice/transcribe → download recording → Deepgram STT → agent
-                                → Deepgram TTS → /audio/{key} → <Play> + <Record>
-  3. /audio/{key}              → serve temporary MP3 bytes to Twilio's <Play>
+Flow:
+  1. POST /webhooks/voice/incoming
+       → TwiML: <Connect><Stream url="wss://.../ws/voice"/>
+
+  2. WS /ws/voice  (persistent WebSocket for the full call)
+       on start   → stream greeting mulaw chunks directly to Twilio
+       on media   → audio chunks → Deepgram live STT → final transcript
+                  → agent → Deepgram TTS streaming mulaw → Twilio WebSocket
 """
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json as _json
 import logging
 import re
 import time
 
-import httpx
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-# HTTPException is kept for the /audio/{key} 404 — all voice webhook handlers
-# must return TwiML instead of raising exceptions.
+from fastapi import APIRouter, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
-from api.agent_service import AgentService
-from api.dependencies import get_agent_service
+from api.dependencies import get_agent_service_from_cache
 from api.handlers import process_request
-from infra.twilio_voice import audio_store
 from infra.twilio_voice.adapter import TwilioVoiceAdapter, TwilioVoiceCall
-from infra.twilio_voice.deepgram_client import synthesize, transcribe
+from infra.twilio_voice.deepgram_live import run_live_transcription
+from infra.twilio_voice.deepgram_client import synthesize_stream
 from infra.twilio_voice.twiml import (
     hangup_response,
-    play_and_record,
-    record_response,
+    stream_connect,
     transfer_response,
 )
+from infra.twilio_voice.twilio_rest import update_call_twiml
 from infra.twilio_voice.webhook import validate_twilio_signature
 from settings import (
     DEEPGRAM_API_KEY,
@@ -48,14 +50,15 @@ from settings import (
 )
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 _TWIML = "application/xml"
-_TRANSCRIBE_PATH = "/webhooks/voice/transcribe"
-_AUDIO_PATH = "/audio"
-
 _HANDOFF_TRIGGERS = ("transferir", "agente humano", "hablar con una persona", "escalar")
+_FAREWELL_TRIGGERS = ("adiós", "adios", "hasta luego", "hasta pronto", "chao", "chau", "bye", "gracias por todo", "eso es todo", "no necesito más", "no necesito mas")
+
+# Per-call metadata: {call_sid: {"from": str, "to": str}}
+# Survives WebSocket reconnections within the same call.
+_call_meta: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -66,31 +69,22 @@ def _twiml(content: str) -> Response:
     return Response(content=content, media_type=_TWIML)
 
 
-def _base_url(request: Request) -> str:
-    if TWILIO_VOICE_BASE_URL:
-        return TWILIO_VOICE_BASE_URL.rstrip("/")
-    url = request.url
-    return f"{url.scheme}://{url.netloc}"
-
-
-def _transcribe_url(request: Request) -> str:
-    return _base_url(request) + _TRANSCRIBE_PATH
-
-
-def _audio_url(request: Request, key: str) -> str:
-    return f"{_base_url(request)}{_AUDIO_PATH}/{key}"
+def _ws_url() -> str:
+    base = TWILIO_VOICE_BASE_URL.rstrip("/") if TWILIO_VOICE_BASE_URL else ""
+    return base.replace("https://", "wss://").replace("http://", "ws://") + "/ws/voice"
 
 
 def _needs_handoff(text: str) -> bool:
     lowered = text.lower()
-    return any(trigger in lowered for trigger in _HANDOFF_TRIGGERS)
+    return any(t in lowered for t in _HANDOFF_TRIGGERS)
+
+
+def _needs_hangup(text: str) -> bool:
+    lowered = text.lower()
+    return any(t in lowered for t in _FAREWELL_TRIGGERS)
 
 
 def _check_signature(request: Request, form_data: dict[str, str]) -> bool:
-    """
-    Returns False if the Twilio signature is invalid.
-    Never raises — callers must always return TwiML, not JSON errors.
-    """
     if not TWILIO_VOICE_AUTH_TOKEN:
         return True
     signature = request.headers.get("X-Twilio-Signature", "")
@@ -104,20 +98,8 @@ def _check_signature(request: Request, form_data: dict[str, str]) -> bool:
     return valid
 
 
-async def _download_recording(recording_url: str) -> bytes:
-    """Download a Twilio recording as MP3, authenticating with Basic auth."""
-    # Twilio requires the .mp3 suffix to return the right format
-    url = recording_url if recording_url.endswith(".mp3") else recording_url + ".mp3"
-    auth = (TWILIO_ACCOUNT_SID, TWILIO_VOICE_AUTH_TOKEN) if TWILIO_ACCOUNT_SID else None
-
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.get(url, auth=auth, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.content
-
-
 def _clean_for_voice(text: str) -> str:
-    """Strip markdown and limit to 2 sentences — long text kills TTS latency."""
+    """Strip markdown and emojis, limit to 2 sentences for TTS."""
     text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
     text = re.sub(r"_{1,2}(.+?)_{1,2}", r"\1", text)
     text = re.sub(r"`{1,3}[^`]*`{1,3}", "", text)
@@ -125,18 +107,27 @@ def _clean_for_voice(text: str) -> str:
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n+", " ", text)
+    # Strip emojis (they get read literally or garble TTS)
+    text = re.sub(r"[^\x00-\x7F\u00C0-\u024F\u00A1-\u00BF¿¡]", "", text)
     text = text.strip()
-    # Truncate to first 2 sentences to keep TTS under ~1s
-    sentences = re.split(r"(?<=[.!?¿¡])\s+", text)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
     return " ".join(sentences[:2]).strip()
 
 
-async def _tts(text: str) -> bytes:
-    return await synthesize(_clean_for_voice(text), DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL)
+async def _stream_tts(text: str, websocket: WebSocket, stream_sid: str) -> None:
+    """Stream Deepgram TTS mulaw chunks directly to Twilio via WebSocket."""
+    # Clear any audio currently playing on the call
+    await websocket.send_text(_json.dumps({"event": "clear", "streamSid": stream_sid}))
+    async for chunk in synthesize_stream(_clean_for_voice(text), DEEPGRAM_API_KEY, model=DEEPGRAM_TTS_MODEL):
+        await websocket.send_text(_json.dumps({
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {"payload": base64.b64encode(chunk).decode()},
+        }))
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Incoming call webhook
 # ---------------------------------------------------------------------------
 
 @router.post("/webhooks/voice/incoming")
@@ -146,7 +137,7 @@ async def voice_incoming(
     From: str = Form(...),
     To: str = Form(...),
 ):
-    """Called by Twilio when an inbound call starts. Returns greeting + first Record."""
+    """Called by Twilio when a call arrives. Opens a Media Stream WebSocket."""
     try:
         form_data = {k: str(v) for k, v in (await request.form()).items()}
         if not _check_signature(request, form_data):
@@ -154,140 +145,149 @@ async def voice_incoming(
 
         logger.info("voice_incoming call_sid=%s from=%s to=%s", CallSid, From, To)
 
-        transcribe_url = _transcribe_url(request)
+        # Store call metadata so the WebSocket handler can build AgentAssistRequest
+        _call_meta[CallSid] = {"from": From, "to": To}
 
-        if DEEPGRAM_API_KEY:
-            tts_bytes = await _tts(TWILIO_VOICE_GREETING)
-            key = audio_store.put(tts_bytes)
-            return _twiml(play_and_record(_audio_url(request, key), transcribe_url))
-
-        return _twiml(record_response(TWILIO_VOICE_GREETING, transcribe_url))
+        # Open the Media Stream WebSocket — greeting is streamed directly from there
+        return _twiml(stream_connect(_ws_url()))
 
     except Exception:  # pylint: disable=broad-except
         logger.exception("voice_incoming_error call_sid=%s", CallSid)
-        return _twiml(record_response(TWILIO_VOICE_GREETING, _transcribe_url(request)))
+        return _twiml(hangup_response(""))
 
 
-@router.post("/webhooks/voice/transcribe")
-async def voice_transcribe(
-    request: Request,
-    CallSid: str = Form(...),
-    From: str = Form(...),
-    To: str = Form(...),
-    RecordingUrl: str = Form(default=""),
-    RecordingDuration: str = Form(default="0"),
-    CallStatus: str = Form(default="in-progress"),
-    agent_service: AgentService = Depends(get_agent_service),
-):
+# ---------------------------------------------------------------------------
+# Media Streams WebSocket
+# ---------------------------------------------------------------------------
+
+@router.websocket("/ws/voice")
+async def voice_stream(websocket: WebSocket):
     """
-    Called by Twilio after <Record> finishes.
-    Runs the full pipeline: download → STT → agent → TTS → Play + Record.
-    Always returns TwiML — never JSON — so Twilio never sees an "application error".
+    Persistent WebSocket that handles the full conversation loop:
+    audio in → Deepgram STT → agent → Deepgram TTS → Twilio REST update.
+
+    No HTTP timeout applies here — the connection stays open for the whole call.
     """
-    transcribe_url = _transcribe_url(request)
+    await websocket.accept()
+
+    call_sid: str | None = None
+    stream_sid: str | None = None
+    audio_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    # Lock prevents a second agent call while the first is still running
+    agent_busy = asyncio.Lock()
+    deepgram_task: asyncio.Task | None = None
+
+    async def handle_transcript(transcript: str) -> None:
+        """Called by Deepgram on each final transcript."""
+        if agent_busy.locked():
+            logger.debug("voice_stream agent busy, dropping transcript=%r", transcript[:40])
+            return
+
+        async with agent_busy:
+            t0 = time.perf_counter()
+            meta = _call_meta.get(call_sid, {})
+            logger.info("voice_stream transcript=%r call_sid=%s", transcript[:80], call_sid)
+
+            try:
+                agent_svc = get_agent_service_from_cache()
+                adapter = TwilioVoiceAdapter()
+                call = TwilioVoiceCall(
+                    call_sid=call_sid,
+                    from_number=meta.get("from", ""),
+                    to_number=meta.get("to", ""),
+                    speech_result=transcript,
+                )
+                assist_request = adapter.to_assist_request(
+                    call,
+                    prompt_name=TWILIO_VOICE_PROMPT_NAME,
+                    model_name=TWILIO_VOICE_MODEL_NAME or None,
+                    temperature=TWILIO_VOICE_TEMPERATURE,
+                )
+                assist_response = await process_request(assist_request, agent_svc)
+                answer_text = adapter.extract_outbound_text(assist_response)
+                t1 = time.perf_counter()
+                logger.info(
+                    "voice_stream step=agent t=%.2fs response=%r tools=%s call_sid=%s",
+                    t1 - t0, answer_text[:80], assist_response.tools_used, call_sid,
+                )
+
+                if not answer_text:
+                    answer_text = "Un momento, ¿puedes repetirme tu consulta?"
+
+                # Handoff — still needs REST update to transfer the call
+                if _needs_handoff(answer_text) and TWILIO_VOICE_HANDOFF_NUMBER:
+                    logger.info("voice_stream handoff call_sid=%s", call_sid)
+                    await _stream_tts(answer_text, websocket, stream_sid)
+                    twiml = transfer_response(TWILIO_VOICE_HANDOFF_NUMBER)
+                    await update_call_twiml(TWILIO_ACCOUNT_SID, TWILIO_VOICE_AUTH_TOKEN, call_sid, twiml)
+                    return
+
+                # Hangup — stream farewell then hang up via REST
+                if _needs_hangup(transcript) or _needs_hangup(answer_text):
+                    logger.info("voice_stream hangup call_sid=%s", call_sid)
+                    await _stream_tts(answer_text, websocket, stream_sid)
+                    twiml = hangup_response("")
+                    await update_call_twiml(TWILIO_ACCOUNT_SID, TWILIO_VOICE_AUTH_TOKEN, call_sid, twiml)
+                    _call_meta.pop(call_sid, None)
+                    return
+
+                # Stream TTS audio directly to Twilio via WebSocket
+                await _stream_tts(answer_text, websocket, stream_sid)
+                logger.info(
+                    "voice_stream step=total t=%.2fs call_sid=%s",
+                    time.perf_counter() - t0, call_sid,
+                )
+
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("voice_stream handle_transcript error call_sid=%s", call_sid)
 
     try:
-        form_data = {k: str(v) for k, v in (await request.form()).items()}
-        if not _check_signature(request, form_data):
-            return _twiml(hangup_response(""))
+        async for raw in websocket.iter_text():
+            data = _json.loads(raw)
+            event = data.get("event")
 
-        logger.info(
-            "voice_transcribe call_sid=%s from=%s duration=%s status=%s",
-            CallSid, From, RecordingDuration, CallStatus,
-        )
+            if event == "connected":
+                logger.info("voice_stream ws_connected")
 
-        if CallStatus in ("completed", "failed", "busy", "no-answer", "canceled"):
-            return _twiml(hangup_response(""))
+            elif event == "start":
+                call_sid = data["start"]["callSid"]
+                stream_sid = data["start"]["streamSid"]
+                logger.info("voice_stream stream_start call_sid=%s stream_sid=%s", call_sid, stream_sid)
 
-        if not RecordingUrl:
-            logger.warning("voice_transcribe missing RecordingUrl call_sid=%s", CallSid)
-            return _twiml(record_response("No te escuché bien, ¿me repites?", transcribe_url))
-
-        if int(RecordingDuration or 0) < 1:
-            return _twiml(record_response("No te escuché bien, ¿me repites?", transcribe_url))
-
-        t0 = time.perf_counter()
-
-        # 1) Download recording from Twilio
-        audio_bytes = await _download_recording(RecordingUrl)
-        t1 = time.perf_counter()
-        logger.info("voice_transcribe step=download bytes=%d t=%.2fs call_sid=%s", len(audio_bytes), t1 - t0, CallSid)
-
-        # 2) Deepgram STT: audio → text
-        if not DEEPGRAM_API_KEY:
-            raise RuntimeError("DEEPGRAM_KEY not configured")
-
-        transcript = await transcribe(
-            audio_bytes,
-            DEEPGRAM_API_KEY,
-            language=DEEPGRAM_STT_LANGUAGE,
-            model=DEEPGRAM_STT_MODEL,
-        )
-        t2 = time.perf_counter()
-        logger.info("voice_transcribe step=stt stt=%r t=%.2fs call_sid=%s", transcript[:80], t2 - t1, CallSid)
-
-        if not transcript:
-            return _twiml(record_response("No te entendí bien, ¿puedes repetirlo?", transcribe_url))
-
-        # 3) Agent: text → response text (same path as chat and WhatsApp)
-        adapter = TwilioVoiceAdapter()
-        call = TwilioVoiceCall(
-            call_sid=CallSid,
-            from_number=From,
-            to_number=To,
-            speech_result=transcript,
-            call_status=CallStatus,
-        )
-        assist_request = adapter.to_assist_request(
-            call,
-            prompt_name=TWILIO_VOICE_PROMPT_NAME,
-            model_name=TWILIO_VOICE_MODEL_NAME or None,
-            temperature=TWILIO_VOICE_TEMPERATURE,
-        )
-        assist_response = await process_request(assist_request, agent_service)
-        answer_text = adapter.extract_outbound_text(assist_response)
-        t3 = time.perf_counter()
-
-        if not answer_text:
-            answer_text = "Un momento, ¿puedes repetirme tu consulta?"
-
-        logger.info(
-            "voice_transcribe step=agent t=%.2fs response=%r tools=%s call_sid=%s",
-            t3 - t2, answer_text[:80], assist_response.tools_used, CallSid,
-        )
-
-        # 4) Handoff check
-        if _needs_handoff(answer_text) and TWILIO_VOICE_HANDOFF_NUMBER:
-            logger.info("voice_handoff call_sid=%s to=%s", CallSid, TWILIO_VOICE_HANDOFF_NUMBER)
-            try:
-                tts_bytes = await _tts(answer_text)
-                key = audio_store.put(tts_bytes)
-                return _twiml(
-                    '<?xml version="1.0" encoding="UTF-8"?>'
-                    "<Response>"
-                    f"<Play>{_audio_url(request, key)}</Play>"
-                    f"<Dial>{TWILIO_VOICE_HANDOFF_NUMBER}</Dial>"
-                    "</Response>"
+                deepgram_task = asyncio.create_task(
+                    run_live_transcription(
+                        DEEPGRAM_API_KEY,
+                        audio_queue,
+                        handle_transcript,
+                        language=DEEPGRAM_STT_LANGUAGE,
+                        model=DEEPGRAM_STT_MODEL,
+                    )
                 )
-            except Exception:  # pylint: disable=broad-except
-                return _twiml(transfer_response(TWILIO_VOICE_HANDOFF_NUMBER, message=answer_text))
 
-        # 5) Deepgram TTS: response text → MP3 bytes → serve via /audio/{key}
-        tts_bytes = await _tts(answer_text)
-        t4 = time.perf_counter()
-        logger.info("voice_transcribe step=tts t=%.2fs call_sid=%s", t4 - t3, CallSid)
-        key = audio_store.put(tts_bytes)
-        return _twiml(play_and_record(_audio_url(request, key), transcribe_url))
+                # Stream greeting directly to caller
+                if TWILIO_VOICE_GREETING and DEEPGRAM_API_KEY:
+                    asyncio.ensure_future(_stream_tts(TWILIO_VOICE_GREETING, websocket, stream_sid))
 
-    except Exception:  # pylint: disable=broad-except
-        logger.exception("voice_transcribe_error call_sid=%s", CallSid)
-        return _twiml(hangup_response("Tuve un problema técnico. Por favor llama de nuevo."))
+            elif event == "media":
+                chunk = base64.b64decode(data["media"]["payload"])
+                try:
+                    audio_queue.put_nowait(chunk)
+                except asyncio.QueueFull:
+                    pass  # Drop chunk if Deepgram is lagging
+
+            elif event == "stop":
+                logger.info("voice_stream stream_stop call_sid=%s", call_sid)
+                await audio_queue.put(None)
+                break
+
+    except WebSocketDisconnect:
+        logger.info("voice_stream ws_disconnected call_sid=%s", call_sid)
+    except Exception:
+        logger.exception("voice_stream error call_sid=%s", call_sid)
+    finally:
+        await audio_queue.put(None)
+        if deepgram_task and not deepgram_task.done():
+            deepgram_task.cancel()
+        # Don't pop _call_meta here — call may reconnect (after TTS play)
 
 
-@router.get("/audio/{key}")
-async def serve_audio(key: str):
-    """Serve a temporary Deepgram TTS clip so Twilio's <Play> can fetch it."""
-    data = audio_store.get(key)
-    if data is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not found or expired")
-    return Response(content=data, media_type="audio/mpeg")

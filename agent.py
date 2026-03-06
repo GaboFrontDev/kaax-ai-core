@@ -66,6 +66,7 @@ def build_agent(
     model: Optional[Any] = None,
     prompt_factory: Optional[PromptFactory] = None,
     stores: Optional[dict] = None,
+    exclude_tools: Optional[List[str]] = None,
 ):
     """Build and return a LangChain/LangGraph agent.
 
@@ -87,6 +88,7 @@ def build_agent(
             temperature=temperature,
             demo_link=DEMO_LINK,
             pricing_link=PRICING_LINK,
+            exclude_tools=exclude_tools or [],
         )
 
     # --- Legacy single-agent fallback ---

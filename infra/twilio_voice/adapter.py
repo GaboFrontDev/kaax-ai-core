@@ -34,6 +34,8 @@ class TwilioVoiceAdapter:
             promptName=prompt_name,
             modelName=model_name,
             temperature=temperature,
+            # conversation_loop_tool is irrelevant for phone calls and adds ~3s latency
+            excludeTools=["conversation_loop_tool"],
         )
 
     def extract_outbound_text(self, response: AgentAssistResponse) -> str:

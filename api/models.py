@@ -17,6 +17,8 @@ class AgentAssistRequest(BaseModel):
     sessionId: Optional[str] = None
     promptName: Optional[str] = None
     toolChoice: Optional[str] = "auto"
+    excludeTools: list[str] = []
+    systemContext: Optional[str] = None
 
 
 class AgentAssistResponse(BaseModel):

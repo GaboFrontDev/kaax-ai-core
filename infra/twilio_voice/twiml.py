@@ -92,6 +92,27 @@ def play_and_record(audio_url: str, action_url: str) -> str:
     )
 
 
+def stream_connect(ws_url: str, greeting: str = "") -> str:
+    """Connect call to a Media Streams WebSocket, optionally playing a greeting first."""
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"]
+    if greeting:
+        parts.append(_say(greeting))
+    parts.append(f'<Connect><Stream url="{ws_url}"/></Connect>')
+    parts.append("</Response>")
+    return "".join(parts)
+
+
+def stream_play_then_connect(audio_url: str, ws_url: str) -> str:
+    """Play TTS audio then reconnect to Media Stream for the next turn."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f"<Play>{audio_url}</Play>"
+        f'<Connect><Stream url="{ws_url}"/></Connect>'
+        "</Response>"
+    )
+
+
 def transfer_response(phone_number: str, message: str = "") -> str:
     """Optionally say a message then dial a human-agent number."""
     parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"]

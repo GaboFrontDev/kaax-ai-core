@@ -113,7 +113,7 @@ TWILIO_VOICE_GREETING = os.getenv(
 
 # Deepgram
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_KEY", "")
-DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es")
 DEEPGRAM_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es")
 

@@ -136,12 +136,14 @@ class MultiAgentSupervisor:
         temperature: float = DEFAULT_TEMPERATURE,
         demo_link: str = DEMO_LINK,
         pricing_link: str = PRICING_LINK,
+        exclude_tools: Optional[List[str]] = None,
     ) -> None:
         self.checkpointer = checkpointer
         self.model_name = model_name
         self.temperature = temperature
         self.demo_link = demo_link
         self.pricing_link = pricing_link
+        self._exclude_tools: set[str] = set(exclude_tools or [])
         self._model = get_model(model_name=model_name, temperature=temperature)
         self._pf = PromptFactory()
         self._base_agent: Any | None = None  # cached; used only for state ops
@@ -159,7 +161,7 @@ class MultiAgentSupervisor:
         """
         if self._base_agent is None:
             base_prompt = "\n\n".join(
-                [TOOL_POLICY_BLOCK, self._pf.load_prompt("shared_base")]
+                [self._tool_policy_block(), self._pf.load_prompt("shared_base")]
             )
             self._base_agent = create_agent(
                 self._model,
@@ -191,12 +193,23 @@ class MultiAgentSupervisor:
     # ------------------------------------------------------------------
 
     def _default_tools(self) -> list:
-        return [
+        all_tools = [
             conversation_loop_tool,
             memory_intent_router_tool,
             capture_lead_if_ready_tool,
             simple_math_tool,
         ]
+        if not self._exclude_tools:
+            return all_tools
+        return [t for t in all_tools if t.name not in self._exclude_tools]
+
+    def _tool_policy_block(self) -> str:
+        if "conversation_loop_tool" in self._exclude_tools:
+            return TOOL_POLICY_BLOCK.replace(
+                "- ALWAYS call `conversation_loop_tool` with the latest user text before writing your final answer.\n",
+                "",
+            )
+        return TOOL_POLICY_BLOCK
 
     def _compose_system_prompt(
         self,
@@ -210,7 +223,7 @@ class MultiAgentSupervisor:
         turn_instruction = _TURN_MODE_INSTRUCTIONS[turn_mode]
 
         return "\n\n".join(
-            [TOOL_POLICY_BLOCK, base, specialist, turn_instruction, summary]
+            [self._tool_policy_block(), base, specialist, turn_instruction, summary]
         )
 
     def _select_route(self, state: ConversationState, latest_text: str) -> str:

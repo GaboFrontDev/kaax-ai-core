@@ -28,6 +28,7 @@ class AgentService:
             prompt_name=request.promptName or "agent",
             checkpointer=self.session_manager,
             email=request.requestor,
+            exclude_tools=request.excludeTools,
         )
 
         logger.info("Created core agent for requestor=%s model=%s", request.requestor, model_name)

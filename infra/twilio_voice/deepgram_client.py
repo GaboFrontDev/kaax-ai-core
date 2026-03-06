@@ -51,12 +51,7 @@ async def synthesize(
     *,
     model: str = "aura-2-celeste-es",
 ) -> bytes:
-    """
-    Send text to Deepgram TTS, return MP3 audio bytes.
-
-    Deepgram TTS expects Content-Type: text/plain and the raw text as body
-    (not JSON). Model aura-2-celeste-es is the native Spanish voice.
-    """
+    """Send text to Deepgram TTS, return MP3 audio bytes."""
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "text/plain",
@@ -70,3 +65,40 @@ async def synthesize(
         )
         resp.raise_for_status()
         return resp.content
+
+
+async def synthesize_stream(
+    text: str,
+    api_key: str,
+    *,
+    model: str = "aura-2-celeste-es",
+    chunk_size: int = 320,
+):
+    """
+    Stream Deepgram TTS as raw mulaw 8kHz chunks — ready to send directly
+    to Twilio Media Streams via WebSocket without any conversion.
+
+    chunk_size=320 bytes = 40ms of mulaw at 8kHz (safe for Twilio).
+    """
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "Content-Type": "text/plain",
+    }
+    params = {
+        "model": model,
+        "encoding": "mulaw",
+        "sample_rate": "8000",
+        "container": "none",
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with client.stream(
+            "POST",
+            _TTS_URL,
+            params=params,
+            headers=headers,
+            content=text.encode("utf-8"),
+        ) as resp:
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes(chunk_size):
+                if chunk:
+                    yield chunk
