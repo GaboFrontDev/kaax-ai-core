@@ -1,4 +1,4 @@
-"""Twilio-specific Deepgram wrappers (mulaw/8k defaults)."""
+"""WhatsApp Calling-specific Deepgram wrappers (WebRTC-friendly PCM defaults)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,20 @@ async def transcribe(
     language: str = "es",
     model: str = "nova-2",
 ) -> str:
-    """Backward-compatible STT helper used by Twilio flows."""
+    """
+    STT defaults for WhatsApp Calling bridge payloads.
+
+    Assumes PCM16 mono frames when bridging WebRTC audio to bytes.
+    """
     return await _transcribe(
         audio_bytes,
         api_key,
         language=language,
         model=model,
-        content_type="audio/mpeg",
+        content_type="audio/raw",
+        encoding="linear16",
+        sample_rate=16000,
+        channels=1,
     )
 
 
@@ -30,8 +37,19 @@ async def synthesize(
     *,
     model: str = "aura-2-celeste-es",
 ) -> bytes:
-    """Backward-compatible non-streaming TTS helper used by Twilio flows."""
-    return await _synthesize(text, api_key, model=model)
+    """
+    TTS defaults for WhatsApp Calling bridge payloads.
+
+    Produces raw PCM16 mono at 16kHz for WebRTC-side conversion/packetization.
+    """
+    return await _synthesize(
+        text,
+        api_key,
+        model=model,
+        encoding="linear16",
+        sample_rate=16000,
+        container="none",
+    )
 
 
 async def synthesize_stream(
@@ -39,19 +57,19 @@ async def synthesize_stream(
     api_key: str,
     *,
     model: str = "aura-2-celeste-es",
-    chunk_size: int = 320,
+    chunk_size: int = 640,
 ):
     """
-    Stream raw mulaw (8kHz, no container) bytes for Twilio Media Streams.
+    Stream raw PCM16 mono (16kHz) bytes for WhatsApp Calling/WebRTC bridge.
 
-    chunk_size=320 bytes ~= 40ms at 8kHz mulaw.
+    chunk_size=640 bytes ~= 20ms at 16kHz linear16 mono.
     """
     async for chunk in _synthesize_stream(
         text,
         api_key,
         model=model,
-        encoding="mulaw",
-        sample_rate=8000,
+        encoding="linear16",
+        sample_rate=16000,
         container="none",
         chunk_size=chunk_size,
     ):

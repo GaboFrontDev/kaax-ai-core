@@ -19,6 +19,9 @@ Core aislado para construir agentes con LangChain/LangGraph + FastAPI, incluyend
 - `session_manager.py`
 - `sql_utilities.py`
 - `api/*`
+- `infra/adapters/*` (selector de adapters por canal/proveedor)
+- `infra/deepgram/*` (cliente compartido STT/TTS)
+- `infra/whatsapp_calls/*` (wrappers de Deepgram para llamadas WhatsApp/WebRTC)
 - `infra/whatsapp_meta/*`
 - `infra/chainlit/*`
 
@@ -64,11 +67,16 @@ make run-chainlit CHAINLIT_SHOW_TOOL_EVENTS=true
 - `POST /api/agent/assist`
 - `GET /api/channels/whatsapp/meta/webhook` (verificacion Meta)
 - `POST /api/channels/whatsapp/meta/webhook` (eventos inbound Meta)
+- `GET /api/channels/whatsapp/meta/calls` (verificacion webhook de llamadas)
+- `POST /api/channels/whatsapp/meta/calls` (eventos de WhatsApp Calling)
+- `GET /calls` (alias de verificacion para suscriptor de llamadas)
+- `POST /calls` (alias de eventos para suscriptor de llamadas)
 
 ## Variables clave de WhatsApp Meta
 
 En `.env`:
 
+- `WHATSAPP_PROVIDER` (default: `meta`)
 - `WHATSAPP_META_VERIFY_TOKEN`
 - `WHATSAPP_META_APP_SECRET`
 - `WHATSAPP_META_ACCESS_TOKEN`
@@ -77,6 +85,30 @@ En `.env`:
 - `WHATSAPP_META_PROMPT_NAME`
 - `WHATSAPP_META_MODEL_NAME`
 - `WHATSAPP_META_TEMPERATURE`
+
+## Variables clave de Voice
+
+En `.env`:
+
+- `VOICE_PROVIDER` (default: `twilio`)
+- `TWILIO_VOICE_AUTH_TOKEN`
+- `TWILIO_VOICE_BASE_URL`
+- `TWILIO_VOICE_PROMPT_NAME`
+- `TWILIO_VOICE_MODEL_NAME`
+- `TWILIO_VOICE_TEMPERATURE`
+
+## Variables clave de WhatsApp Calling
+
+En `.env`:
+
+- `WHATSAPP_CALLS_VERIFY_TOKEN` (si está vacío usa `WHATSAPP_META_VERIFY_TOKEN`)
+- `WHATSAPP_CALLS_APP_SECRET` (si está vacío usa `WHATSAPP_META_APP_SECRET`)
+- `WHATSAPP_CALLS_PROMPT_NAME` (default: `voice_agent`)
+- `WHATSAPP_CALLS_MODEL_NAME`
+- `WHATSAPP_CALLS_TEMPERATURE`
+- `WHATSAPP_CALLS_INCLUDE_TTS_PAYLOAD` (debug, default: `false`)
+
+Nota: para negociación SDP/WebRTC (`answer` en `POST /calls`) necesitas instalar `aiortc`.
 
 ## Pruebas de humo
 

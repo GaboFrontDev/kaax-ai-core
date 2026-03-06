@@ -25,7 +25,8 @@ from fastapi.responses import Response
 
 from api.dependencies import get_agent_service_from_cache
 from api.handlers import stream_voice_sentences
-from infra.twilio_voice.adapter import TwilioVoiceAdapter, TwilioVoiceCall
+from infra.adapters import AdapterNotConfiguredError, get_voice_adapter
+from infra.twilio_voice.adapter import TwilioVoiceCall
 from infra.twilio_voice.deepgram_live import run_live_transcription
 from infra.twilio_voice.deepgram_client import synthesize_stream
 from infra.twilio_voice.twiml import (
@@ -40,6 +41,7 @@ from settings import (
     DEEPGRAM_STT_LANGUAGE,
     DEEPGRAM_STT_MODEL,
     DEEPGRAM_TTS_MODEL,
+    VOICE_PROVIDER,
     TWILIO_ACCOUNT_SID,
     TWILIO_VOICE_AUTH_TOKEN,
     TWILIO_VOICE_BASE_URL,
@@ -188,6 +190,12 @@ async def voice_incoming(
 ):
     """Called by Twilio when a call arrives. Opens a Media Stream WebSocket."""
     try:
+        try:
+            get_voice_adapter(VOICE_PROVIDER)
+        except AdapterNotConfiguredError:
+            logger.error("voice_adapter_not_configured provider=%s", VOICE_PROVIDER)
+            return _twiml(hangup_response(""))
+
         form_data = {k: str(v) for k, v in (await request.form()).items()}
         if not _check_signature(request, form_data):
             return _twiml(hangup_response(""))
@@ -219,6 +227,13 @@ async def voice_stream(websocket: WebSocket):
     """
     await websocket.accept()
 
+    try:
+        voice_adapter = get_voice_adapter(VOICE_PROVIDER)
+    except AdapterNotConfiguredError:
+        logger.error("voice_adapter_not_configured provider=%s", VOICE_PROVIDER)
+        await websocket.close(code=1011)
+        return
+
     call_sid: str | None = None
     stream_sid: str | None = None
     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -239,14 +254,13 @@ async def voice_stream(websocket: WebSocket):
 
             try:
                 agent_svc = get_agent_service_from_cache()
-                adapter = TwilioVoiceAdapter()
                 call = TwilioVoiceCall(
                     call_sid=call_sid,
                     from_number=meta.get("from", ""),
                     to_number=meta.get("to", ""),
                     speech_result=transcript,
                 )
-                assist_request = adapter.to_assist_request(
+                assist_request = voice_adapter.to_assist_request(
                     call,
                     prompt_name=TWILIO_VOICE_PROMPT_NAME,
                     model_name=TWILIO_VOICE_MODEL_NAME or None,
@@ -374,5 +388,3 @@ async def voice_stream(websocket: WebSocket):
         if deepgram_task and not deepgram_task.done():
             deepgram_task.cancel()
         # Don't pop _call_meta here — call may reconnect (after TTS play)
-
-

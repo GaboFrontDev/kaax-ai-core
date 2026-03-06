@@ -18,6 +18,9 @@ class InboundWhatsAppMessage:
 
 
 class WhatsAppMetaAdapter:
+    channel = "whatsapp"
+    provider = "meta"
+
     def extract_inbound_messages(self, payload: dict[str, Any]) -> list[InboundWhatsAppMessage]:
         messages: list[InboundWhatsAppMessage] = []
 

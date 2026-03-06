@@ -12,13 +12,14 @@ from fastapi.responses import PlainTextResponse
 from api.agent_service import AgentService
 from api.dependencies import get_agent_service
 from api.handlers import process_request
-from infra.whatsapp_meta.adapter import WhatsAppMetaAdapter
+from infra.adapters import AdapterNotConfiguredError, get_whatsapp_adapter
 from infra.whatsapp_meta.client import send_meta_text_message, send_typing_action
 from infra.whatsapp_meta.webhook import (
     validate_meta_signature,
     verify_meta_webhook_token,
 )
 from settings import (
+    WHATSAPP_PROVIDER,
     WHATSAPP_META_ACCESS_TOKEN,
     WHATSAPP_META_API_VERSION,
     WHATSAPP_META_APP_SECRET,
@@ -92,7 +93,14 @@ async def receive_webhook(
             detail=f"Invalid JSON payload: {exc}",
         ) from exc
 
-    adapter = WhatsAppMetaAdapter()
+    try:
+        adapter = get_whatsapp_adapter(WHATSAPP_PROVIDER)
+    except AdapterNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     inbound_messages = adapter.extract_inbound_messages(payload)
 
     if not inbound_messages:

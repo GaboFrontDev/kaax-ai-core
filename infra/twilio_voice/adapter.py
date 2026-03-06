@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from api.models import AgentAssistRequest, AgentAssistResponse
 
@@ -17,6 +18,9 @@ class TwilioVoiceCall:
 
 
 class TwilioVoiceAdapter:
+    channel = "voice"
+    provider = "twilio"
+
     def to_assist_request(
         self,
         call: TwilioVoiceCall,
@@ -53,5 +57,11 @@ class TwilioVoiceAdapter:
             f"- Si el usuario menciona su nombre, pásalo como contact_name al llamar capture_lead_if_ready_tool."
         )
 
-    def extract_outbound_text(self, response: AgentAssistResponse) -> str:
-        return response.response.strip()
+    def extract_outbound_text(self, response: AgentAssistResponse | dict[str, Any] | str) -> str:
+        if isinstance(response, AgentAssistResponse):
+            text = response.response
+        elif isinstance(response, dict):
+            text = str(response.get("response", ""))
+        else:
+            text = str(response)
+        return text.strip()

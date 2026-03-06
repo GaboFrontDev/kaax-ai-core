@@ -1,4 +1,4 @@
-"""Twilio-specific Deepgram live STT wrapper."""
+"""WhatsApp Calling-specific Deepgram live STT wrapper."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ async def run_live_transcription(
     model: str = "nova-2",
 ) -> None:
     """
-    Twilio defaults: mulaw @ 8000 Hz with endpointing tuned for phone calls.
+    WebRTC bridge defaults: linear16 mono @ 16kHz.
+
+    This wrapper is transport-facing only; SDP/WebRTC signaling lives elsewhere.
     """
     await _run_live_transcription(
         api_key,
@@ -25,8 +27,9 @@ async def run_live_transcription(
         on_final,
         language=language,
         model=model,
-        encoding="mulaw",
-        sample_rate=8000,
+        encoding="linear16",
+        sample_rate=16000,
+        channels=1,
         endpointing=150,
         min_confidence=0.7,
         min_words=2,
