@@ -14,12 +14,16 @@ from api.agent_service import AgentService
 from api.dependencies import get_agent_service
 from api.handlers import process_request
 from infra.adapters import AdapterNotConfiguredError, get_whatsapp_adapter
-from infra.whatsapp_meta.client import send_meta_text_message, send_typing_action
+from infra.whatsapp_meta.client import download_media, send_meta_text_message, send_typing_action
 from infra.whatsapp_meta.webhook import (
     validate_meta_signature,
     verify_meta_webhook_token,
 )
+from infra.deepgram.client import transcribe as deepgram_transcribe
 from settings import (
+    DEEPGRAM_API_KEY,
+    DEEPGRAM_STT_LANGUAGE,
+    DEEPGRAM_STT_MODEL,
     WHATSAPP_PROVIDER,
     WHATSAPP_META_ACCESS_TOKEN,
     WHATSAPP_META_API_VERSION,
@@ -93,6 +97,34 @@ async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None
     if not phone_number_id:
         logger.error("whatsapp_meta missing phone_number_id message_id=%s", inbound.message_id)
         return
+
+    # Transcribe audio message before building the request
+    if inbound.audio_id:
+        if not DEEPGRAM_API_KEY:
+            logger.warning("whatsapp_meta audio received but DEEPGRAM_API_KEY not set, skipping")
+            return
+        try:
+            audio_bytes = await download_media(
+                api_version=WHATSAPP_META_API_VERSION,
+                media_id=inbound.audio_id,
+                access_token=WHATSAPP_META_ACCESS_TOKEN,
+            )
+            transcript = await deepgram_transcribe(
+                audio_bytes,
+                DEEPGRAM_API_KEY,
+                language=DEEPGRAM_STT_LANGUAGE,
+                model=DEEPGRAM_STT_MODEL,
+                content_type="audio/ogg",
+            )
+            if not transcript:
+                logger.info("whatsapp_meta audio transcription empty, skipping")
+                return
+            logger.info("whatsapp_meta audio transcript=%r from=%s", transcript[:80], inbound.from_number)
+            from dataclasses import replace
+            inbound = replace(inbound, text=transcript)
+        except Exception:
+            logger.exception("whatsapp_meta audio transcription failed message_id=%s", inbound.message_id)
+            return
 
     assist_request = adapter.to_assist_request(
         inbound,

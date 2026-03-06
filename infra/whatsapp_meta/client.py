@@ -31,6 +31,34 @@ async def send_typing_action(
         logger.debug("typing_indicator_failed: %s", exc)
 
 
+async def download_media(
+    *,
+    api_version: str,
+    media_id: str,
+    access_token: str,
+) -> bytes:
+    """Download a WhatsApp media file (audio/image/etc) by its media_id.
+
+    Meta flow:
+      1. GET /v{api_version}/{media_id} → JSON with {"url": "...", "mime_type": "..."}
+      2. GET {url} with Bearer token → raw bytes
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Step 1: resolve media URL
+        meta_resp = await client.get(
+            f"https://graph.facebook.com/{api_version}/{media_id}",
+            headers=headers,
+        )
+        meta_resp.raise_for_status()
+        media_url = meta_resp.json()["url"]
+
+        # Step 2: download the actual bytes
+        media_resp = await client.get(media_url, headers=headers)
+        media_resp.raise_for_status()
+        return media_resp.content
+
+
 async def send_meta_text_message(
     *,
     api_version: str,

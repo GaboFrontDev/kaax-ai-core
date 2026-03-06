@@ -15,6 +15,7 @@ class InboundWhatsAppMessage:
     text: str
     message_id: str | None = None
     phone_number_id: str | None = None
+    audio_id: str | None = None  # set when type == "audio"
 
 
 class WhatsAppMetaAdapter:
@@ -45,9 +46,19 @@ class WhatsAppMetaAdapter:
                 if not from_number:
                     continue
 
-                text = self._extract_text(message)
-                if not text:
-                    continue
+                audio_id: str | None = None
+                msg_type = self._clean(message.get("type"))
+                if msg_type == "audio":
+                    audio_block = message.get("audio")
+                    if isinstance(audio_block, dict):
+                        audio_id = self._clean(audio_block.get("id")) or None
+                    if not audio_id:
+                        continue
+                    text = ""  # filled after transcription
+                else:
+                    text = self._extract_text(message)
+                    if not text:
+                        continue
 
                 messages.append(
                     InboundWhatsAppMessage(
@@ -56,6 +67,7 @@ class WhatsAppMetaAdapter:
                         text=text,
                         message_id=self._clean(message.get("id")) or None,
                         phone_number_id=phone_number_id or None,
+                        audio_id=audio_id,
                     )
                 )
 
