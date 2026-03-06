@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.dependencies import set_session_manager
 from api.routers.router import router
@@ -14,6 +17,10 @@ from settings import LOG_LEVEL
 
 logger = logging.getLogger(__name__)
 
+_HANGUP_TWIML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    "<Response><Hangup/></Response>"
+)
 
 
 def create_app() -> FastAPI:
@@ -28,8 +35,42 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
+    class VoiceRequestLogger(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if request.url.path.startswith("/webhooks/voice") or request.url.path.startswith("/audio"):
+                import time as _time
+                t0 = _time.perf_counter()
+                logger.info(">>> REQUEST %s %s", request.method, request.url.path)
+                response = await call_next(request)
+                logger.info("<<< RESPONSE %s %s status=%d t=%.2fs",
+                    request.method, request.url.path, response.status_code,
+                    _time.perf_counter() - t0)
+                return response
+            return await call_next(request)
+
+    app.add_middleware(VoiceRequestLogger)
     app.include_router(router)
     app.state.session_manager = SessionManager()
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
+        """
+        FastAPI returns 422 JSON by default when a Form field is missing.
+        Twilio interprets that as "application error occurred".
+        For voice webhooks return a bare <Hangup/> TwiML instead.
+        """
+        path = request.url.path
+        if path.startswith("/webhooks/voice"):
+            # Log the raw body so we can see exactly what Twilio sent
+            body = await request.body()
+            logger.error(
+                "voice_webhook_validation_error path=%s errors=%s body=%s",
+                path,
+                exc.errors(),
+                body.decode("utf-8", errors="replace")[:500],
+            )
+            return Response(content=_HANGUP_TWIML, media_type="application/xml")
+        raise exc
 
     @app.on_event("startup")
     async def startup_event():

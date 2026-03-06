@@ -95,6 +95,28 @@ WHATSAPP_META_PROMPT_NAME = os.getenv("WHATSAPP_META_PROMPT_NAME", DEFAULT_PROMP
 WHATSAPP_META_MODEL_NAME = os.getenv("WHATSAPP_META_MODEL_NAME", "")
 WHATSAPP_META_TEMPERATURE = _get_optional_float("WHATSAPP_META_TEMPERATURE")
 
+# Twilio Voice
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_VOICE_AUTH_TOKEN = os.getenv("TWILIO_VOICE_AUTH_TOKEN", "")
+# Public base URL used to build the Gather action callback (e.g. https://xyz.ngrok.io).
+# If empty, the URL is derived from the incoming request (fine behind most proxies).
+TWILIO_VOICE_BASE_URL = os.getenv("TWILIO_VOICE_BASE_URL", "")
+TWILIO_VOICE_PROMPT_NAME = os.getenv("TWILIO_VOICE_PROMPT_NAME", "voice_agent")
+TWILIO_VOICE_MODEL_NAME = os.getenv("TWILIO_VOICE_MODEL_NAME", "")
+TWILIO_VOICE_TEMPERATURE = _get_optional_float("TWILIO_VOICE_TEMPERATURE")
+# Optional: E.164 number to transfer calls to a human (e.g. +521234567890)
+TWILIO_VOICE_HANDOFF_NUMBER = os.getenv("TWILIO_VOICE_HANDOFF_NUMBER", "")
+TWILIO_VOICE_GREETING = os.getenv(
+    "TWILIO_VOICE_GREETING",
+    "Hola, gracias por llamar a Kaax AI. ¿En qué puedo ayudarte hoy?",
+)
+
+# Deepgram
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_KEY", "")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
+DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es")
+DEEPGRAM_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es")
+
 # Multi-agent supervisor
 MULTI_AGENT_ENABLED = _get_bool("MULTI_AGENT_ENABLED", True)
 DEMO_LINK = os.getenv("DEMO_LINK", "https://calendly.com/admin-novadream/30min")
