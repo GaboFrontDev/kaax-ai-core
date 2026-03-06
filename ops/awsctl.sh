@@ -127,6 +127,10 @@ Commands:
   deploy [env] [agent]        Run CDK deploy
   diff [env] [agent]          Run CDK diff
   destroy [env] [agent]       Run CDK destroy
+  init-env <env> <agent> [domain]
+                              Scaffold env/agent in CDK config
+  dns-config [env] [agent] [domain]
+                              Print DNS record values for the agent ALB
   cancel [env] [agent]        Cancel CloudFormation update in progress
   sync-secrets [secret-name]  Sync shell exports to AWS Secrets Manager
   status [env] [agent]        CloudFormation stack status
@@ -161,6 +165,65 @@ case "$command_name" in
     env_name="${2:-$DEFAULT_ENV}"
     agent_name="${3:-$DEFAULT_AGENT}"
     exec "$ROOT_DIR/ops/destroy.sh" "$env_name" "$agent_name"
+    ;;
+  init-env)
+    env_name="${2:-}"
+    agent_name="${3:-}"
+    domain_name="${4:-}"
+    if [[ -z "$env_name" || -z "$agent_name" ]]; then
+      fail "Usage: ./ops/awsctl.sh init-env <env> <agent> [domain]"
+      exit 1
+    fi
+    exec "$ROOT_DIR/ops/env-create.sh" "$env_name" "$agent_name" "$domain_name"
+    ;;
+  dns-config)
+    env_name="${2:-$DEFAULT_ENV}"
+    agent_name="${3:-$DEFAULT_AGENT}"
+    input_domain="${4:-}"
+    stack="$(stack_name "$env_name" "$agent_name")"
+    lb_dns="$(stack_output_safe "$stack" "LoadBalancerDNS")"
+    base_url="$(stack_output_safe "$stack" "BaseUrl")"
+
+    if [[ -z "$lb_dns" || "$lb_dns" == "None" ]]; then
+      fail "LoadBalancerDNS not found for stack ${stack}"
+      warn "Deploy first: ./ops/deploy.sh ${env_name} ${agent_name}"
+      exit 2
+    fi
+
+    domain="$input_domain"
+    if [[ -z "$domain" && -n "$base_url" && "$base_url" != "None" ]]; then
+      domain="${base_url#http://}"
+      domain="${domain#https://}"
+      domain="${domain%%/*}"
+    fi
+
+    host_label=""
+    if [[ -n "$domain" ]]; then
+      if [[ "$domain" == *.* ]]; then
+        host_label="${domain%%.*}"
+      else
+        host_label="$domain"
+      fi
+    fi
+
+    echo "stack=${stack}"
+    echo "load_balancer_dns=${lb_dns}"
+    if [[ -n "$base_url" && "$base_url" != "None" ]]; then
+      echo "base_url=${base_url}"
+    fi
+    if [[ -n "$domain" ]]; then
+      echo "domain=${domain}"
+      echo
+      echo "DNS record (copy into your domain manager):"
+      echo "  Type: CNAME"
+      echo "  Name/Host: ${host_label}"
+      echo "  Value/Target: ${lb_dns}"
+      echo "  TTL: 300"
+    else
+      echo
+      echo "Pass a domain to print host label too:"
+      echo "  ./ops/awsctl.sh dns-config ${env_name} ${agent_name} clinicas.kaax.ai"
+    fi
     ;;
   cancel)
     env_name="${2:-$DEFAULT_ENV}"

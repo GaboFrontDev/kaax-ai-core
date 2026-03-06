@@ -13,6 +13,7 @@ WHATSAPP_VERIFY_TOKEN ?= dev-whatsapp-verify-token
 
 ENV ?= dev
 AGENT ?= default
+DOMAIN ?=
 AWSCTL_ARGS ?= help
 SESSION_ID ?=
 
@@ -22,7 +23,8 @@ SESSION_ID ?=
 	health assist webhook-verify \
 	test lint fmt \
 	docker-up docker-down docker-logs docker-up-redis docker-test-postgres docker-test-redis \
-	cdk-bootstrap cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl \
+	cdk-bootstrap cdk-init-env cdk-deploy cdk-diff cdk-destroy cdk-cancel cdk-sync-secrets awsctl \
+	cdk-dns-config \
 	session-clear session-clear-all
 
 help:
@@ -38,6 +40,8 @@ help:
 	@echo "  make test lint fmt      -> calidad de codigo"
 	@echo "  make docker-up/down     -> postgres local (compose)"
 	@echo "  make docker-up-redis    -> redis + sentinel local (compose)"
+	@echo "  make cdk-init-env       -> crea scaffold env/agent en infra/cdk/config/environments.json"
+	@echo "  make cdk-dns-config     -> imprime config DNS (CNAME) para el ALB del agente"
 	@echo "  make cdk-cancel         -> cancela un update de CloudFormation en progreso"
 	@echo "  make cdk-logs           -> sigue los logs del contenedor en ECS en tiempo real"
 	@echo "  make session-clear      -> elimina memoria/checkpoints de un sessionId (SESSION_ID=...)"
@@ -129,6 +133,9 @@ docker-test-redis: docker-up-redis
 cdk-bootstrap:
 	./ops/bootstrap.sh
 
+cdk-init-env:
+	./ops/env-create.sh $(ENV) $(AGENT) $(DOMAIN)
+
 cdk-deploy:
 	./ops/deploy.sh $(ENV) $(AGENT)
 
@@ -140,6 +147,9 @@ cdk-destroy:
 
 cdk-cancel:
 	./ops/awsctl.sh cancel $(ENV) $(AGENT)
+
+cdk-dns-config:
+	./ops/awsctl.sh dns-config $(ENV) $(AGENT) $(DOMAIN)
 
 cdk-logs:
 	@LOG_GROUP=$$(aws logs describe-log-groups \
