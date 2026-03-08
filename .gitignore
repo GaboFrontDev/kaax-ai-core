@@ -11,3 +11,4 @@ __pycache__/
 infra/cdk/.venv/
 infra/cdk/cdk.out/
 infra/cdk/config/environments.json
+.DS_Store
