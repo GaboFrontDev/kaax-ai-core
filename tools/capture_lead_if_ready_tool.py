@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -145,6 +146,7 @@ async def capture_lead_if_ready_tool(
     caller_phone: str | None = None,
     channel: str | None = None,
     contact_name: str | None = None,
+    config: RunnableConfig | None = None,
 ) -> dict:
     """Capture lead data when the conversation is ready for commercial handoff.
 
@@ -190,6 +192,12 @@ async def capture_lead_if_ready_tool(
             asked_pricing,
             next_action,
         )
+        # Mark conversation so no follow-up is sent
+        thread_id = (config or {}).get("configurable", {}).get("thread_id") if config else None
+        if thread_id:
+            from infra.follow_up.db import mark_demo_requested
+            await mark_demo_requested(thread_id, contact_name=contact_name)
+
         notification = _build_notification(
             contact_email, contact_phone, requested_demo, asked_pricing, next_action, user_text,
             channel=channel, caller_phone=caller_phone, contact_name=contact_name,

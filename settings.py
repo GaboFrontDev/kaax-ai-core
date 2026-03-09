@@ -135,6 +135,14 @@ PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 # Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
 WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
 
+# Follow-up message sent 2h after last WhatsApp message if no demo was requested.
+# Use {name} for the contact name (with leading space) or leave it out.
+FOLLOW_UP_MESSAGE = os.getenv(
+    "FOLLOW_UP_MESSAGE",
+    "Hola{name}! Solo quería saber si tienes alguna duda sobre Kaax AI. "
+    "Estoy aquí para ayudarte cuando quieras.",
+)
+
 # Optional lightweight prompt-sanitizer rules
 BLOCK_PATTERNS = [
     r"system\\s+prompt",

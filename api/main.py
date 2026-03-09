@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import FastAPI, Request
@@ -76,10 +77,15 @@ def create_app() -> FastAPI:
     async def startup_event():
         await app.state.session_manager.start()
         set_session_manager(app.state.session_manager)
+        from infra.follow_up.scheduler import run_scheduler
+        app.state.follow_up_task = asyncio.create_task(run_scheduler())
         logger.info("Core API started")
 
     @app.on_event("shutdown")
     async def shutdown_event():
+        task = getattr(app.state, "follow_up_task", None)
+        if task:
+            task.cancel()
         await app.state.session_manager.stop()
         logger.info("Core API stopped")
 

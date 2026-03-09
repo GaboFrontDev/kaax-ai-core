@@ -14,6 +14,7 @@ from api.agent_service import AgentService
 from api.dependencies import get_agent_service
 from api.handlers import process_request
 from infra.adapters import AdapterNotConfiguredError, get_whatsapp_adapter
+from infra.follow_up.db import upsert_conversation
 from infra.whatsapp_meta.client import download_media, send_meta_text_message, send_typing_action
 from infra.whatsapp_meta.webhook import (
     validate_meta_signature,
@@ -133,6 +134,9 @@ async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None
         temperature=WHATSAPP_META_TEMPERATURE,
     )
     session_id = assist_request.sessionId or inbound.from_number
+
+    # Track conversation for follow-up scheduling
+    await upsert_conversation(thread_id=session_id, phone_number=inbound.from_number)
 
     lock = _session_lock(session_id)
     async with lock:
