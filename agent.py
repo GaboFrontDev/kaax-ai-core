@@ -67,6 +67,7 @@ def build_agent(
     prompt_factory: Optional[PromptFactory] = None,
     stores: Optional[dict] = None,
     exclude_tools: Optional[List[str]] = None,
+    max_tokens: Optional[int] = None,
 ):
     """Build and return a LangChain/LangGraph agent.
 
@@ -89,6 +90,7 @@ def build_agent(
             demo_link=DEMO_LINK,
             pricing_link=PRICING_LINK,
             exclude_tools=exclude_tools or [],
+            max_tokens=max_tokens,
         )
 
     # --- Legacy single-agent fallback ---

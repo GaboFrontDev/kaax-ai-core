@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from os.path import dirname, join
 
@@ -134,6 +135,38 @@ PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 
 # Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
 WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
+
+# ── Cost-optimization flags (all off by default for safe rollout) ──────────
+ENABLE_USAGE_METRICS = _get_bool("ENABLE_USAGE_METRICS", False)
+ENABLE_MODEL_ROUTER = _get_bool("ENABLE_MODEL_ROUTER", False)
+ENABLE_PROMPT_COMPACT = _get_bool("ENABLE_PROMPT_COMPACT", False)
+ENABLE_HISTORY_COMPRESSION = _get_bool("ENABLE_HISTORY_COMPRESSION", False)
+
+# Model router
+MODEL_ROUTER_DEFAULT = os.getenv("MODEL_ROUTER_DEFAULT", "us.amazon.nova-lite-v1:0")
+MODEL_ROUTER_FALLBACK = os.getenv("MODEL_ROUTER_FALLBACK", BEDROCK_MODEL)
+MODEL_ROUTER_COMPLEXITY_CHARS = _get_int("MODEL_ROUTER_COMPLEXITY_CHARS", 300)
+
+# Prompt compaction
+MAX_INPUT_USER_TEXT_CHARS = _get_int("MAX_INPUT_USER_TEXT_CHARS", 2000)
+MAX_INPUT_SYSTEM_CONTEXT_CHARS = _get_int("MAX_INPUT_SYSTEM_CONTEXT_CHARS", 1000)
+MODEL_MAX_OUTPUT_TOKENS = _get_int("MODEL_MAX_OUTPUT_TOKENS", 320)
+
+# History compression
+HISTORY_COMPRESS_THRESHOLD_MESSAGES = _get_int("HISTORY_COMPRESS_THRESHOLD_MESSAGES", 20)
+HISTORY_COMPRESS_THRESHOLD_CHARS = _get_int("HISTORY_COMPRESS_THRESHOLD_CHARS", 8000)
+HISTORY_TAIL_MESSAGES = _get_int("HISTORY_TAIL_MESSAGES", 6)
+HISTORY_COMPRESS_MODEL = os.getenv("HISTORY_COMPRESS_MODEL", MODEL_ROUTER_DEFAULT)
+
+# Cost table: model_id → {input_per_1m, output_per_1m} in USD
+MODEL_COST_TABLE_JSON = os.getenv(
+    "MODEL_COST_TABLE_JSON",
+    json.dumps({
+        "us.amazon.nova-lite-v1:0": {"input_per_1m": 0.06, "output_per_1m": 0.24},
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {"input_per_1m": 3.00, "output_per_1m": 15.00},
+        "us.anthropic.claude-sonnet-4-6": {"input_per_1m": 3.00, "output_per_1m": 15.00},
+    }),
+)
 
 # Follow-up message sent 2h after last WhatsApp message if no demo was requested.
 # Use {name} for the contact name (with leading space) or leave it out.

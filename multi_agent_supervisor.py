@@ -31,7 +31,7 @@ from conversation_state import (
 )
 from model_builder import get_model
 from prompt_factory import PromptFactory
-from settings import BEDROCK_MODEL, DEFAULT_TEMPERATURE, DEMO_LINK, PRICING_LINK
+from settings import BEDROCK_MODEL, DEFAULT_TEMPERATURE, DEMO_LINK, ENABLE_PROMPT_COMPACT, PRICING_LINK
 from tools import (
     capture_lead_if_ready_tool,
     conversation_loop_tool,
@@ -137,6 +137,7 @@ class MultiAgentSupervisor:
         demo_link: str = DEMO_LINK,
         pricing_link: str = PRICING_LINK,
         exclude_tools: Optional[List[str]] = None,
+        max_tokens: Optional[int] = None,
     ) -> None:
         self.checkpointer = checkpointer
         self.model_name = model_name
@@ -144,7 +145,10 @@ class MultiAgentSupervisor:
         self.demo_link = demo_link
         self.pricing_link = pricing_link
         self._exclude_tools: set[str] = set(exclude_tools or [])
-        self._model = get_model(model_name=model_name, temperature=temperature)
+        # When ENABLE_PROMPT_COMPACT, exclude conversation_loop_tool by default
+        if ENABLE_PROMPT_COMPACT:
+            self._exclude_tools.add("conversation_loop_tool")
+        self._model = get_model(model_name=model_name, temperature=temperature, max_tokens=max_tokens)
         self._pf = PromptFactory()
         self._base_agent: Any | None = None  # cached; used only for state ops
 
@@ -217,6 +221,7 @@ class MultiAgentSupervisor:
         route: str,
         turn_mode: str,
         system_context: str = "",
+        loop_instruction: str = "",
     ) -> str:
         base = self._pf.load_prompt("shared_base")
         specialist = self._pf.load_prompt(_SPECIALIST_PROMPT_NAMES[route])
@@ -224,6 +229,8 @@ class MultiAgentSupervisor:
         turn_instruction = _TURN_MODE_INSTRUCTIONS[turn_mode]
 
         parts = [self._tool_policy_block(), base, specialist, turn_instruction, summary]
+        if loop_instruction:
+            parts.append(loop_instruction)
         if system_context:
             parts.append(system_context)
         return "\n\n".join(parts)
@@ -260,11 +267,12 @@ class MultiAgentSupervisor:
             logger.warning("Could not load existing messages for state rebuild: %s", exc)
         return []
 
-    def _build_specialist_agent(
+    async def _build_specialist_agent(
         self,
         all_messages: List[BaseMessage],
         latest_text: str,
         system_context: str = "",
+        thread_id: str = "unknown",
     ) -> Any:
         """Build a specialist agent for a single turn."""
         state = _rebuild_state(all_messages)
@@ -274,18 +282,27 @@ class MultiAgentSupervisor:
         )
         turn_mode = _detect_turn_mode(latest_text, prior_human_count)
         route = self._select_route(state, latest_text)
-        system_prompt = self._compose_system_prompt(state, route, turn_mode, system_context)
+
+        # Phase 3: conditional loop detection outside LLM (no tool call round-trip)
+        loop_instruction = ""
+        if ENABLE_PROMPT_COMPACT:
+            from tools.conversation_loop_graph import conversation_loop_graph
+            decision = await conversation_loop_graph.analyze(
+                scope_key=thread_id, user_text=latest_text
+            )
+            if decision.is_repetitive and decision.strategy_instruction:
+                loop_instruction = decision.strategy_instruction
+
+        system_prompt = self._compose_system_prompt(
+            state, route, turn_mode, system_context, loop_instruction
+        )
 
         logger.info(
             "Supervisor | route=%s turn_mode=%s etapa=%s vfit=%s intent=%s "
-            "demo=%s pricing=%s",
-            route,
-            turn_mode,
-            state.etapa_funnel,
-            state.volume_fit(),
-            state.intencion_compra,
-            state.requested_demo,
-            state.asked_pricing,
+            "demo=%s pricing=%s loop=%s",
+            route, turn_mode, state.etapa_funnel, state.volume_fit(),
+            state.intencion_compra, state.requested_demo, state.asked_pricing,
+            bool(loop_instruction),
         )
 
         return create_agent(
@@ -309,8 +326,12 @@ class MultiAgentSupervisor:
         existing = await self._load_existing_messages(config)
         new_messages: List[BaseMessage] = input.get("messages", [])
         latest_text = _extract_latest_text(new_messages)
-        system_context = (config or {}).get("metadata", {}).get("system_context", "")
-        specialist = self._build_specialist_agent(existing + new_messages, latest_text, system_context)
+        cfg = config or {}
+        system_context = cfg.get("metadata", {}).get("system_context", "")
+        thread_id = cfg.get("configurable", {}).get("thread_id", "unknown")
+        specialist = await self._build_specialist_agent(
+            existing + new_messages, latest_text, system_context, thread_id
+        )
         return await specialist.ainvoke(input, config, **kwargs)
 
     async def astream_events(
@@ -323,7 +344,11 @@ class MultiAgentSupervisor:
         existing = await self._load_existing_messages(config)
         new_messages: List[BaseMessage] = input.get("messages", [])
         latest_text = _extract_latest_text(new_messages)
-        system_context = (config or {}).get("metadata", {}).get("system_context", "")
-        specialist = self._build_specialist_agent(existing + new_messages, latest_text, system_context)
+        cfg = config or {}
+        system_context = cfg.get("metadata", {}).get("system_context", "")
+        thread_id = cfg.get("configurable", {}).get("thread_id", "unknown")
+        specialist = await self._build_specialist_agent(
+            existing + new_messages, latest_text, system_context, thread_id
+        )
         async for event in specialist.astream_events(input, config, **kwargs):
             yield event

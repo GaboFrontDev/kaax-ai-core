@@ -11,6 +11,8 @@ from typing import Any, AsyncGenerator
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.ai import AIMessageChunk
 
+import asyncio
+
 from api.callback_handler import APICallbackHandler
 from api.checkpoint_repair import repair_dangling_tool_calls
 from api.models import (
@@ -18,6 +20,18 @@ from api.models import (
     AgentAssistResponse,
     StreamingMessage,
     StreamingMessageType,
+)
+
+from settings import (
+    ENABLE_HISTORY_COMPRESSION,
+    ENABLE_PROMPT_COMPACT,
+    ENABLE_USAGE_METRICS,
+    HISTORY_COMPRESS_MODEL,
+    HISTORY_COMPRESS_THRESHOLD_CHARS,
+    HISTORY_COMPRESS_THRESHOLD_MESSAGES,
+    HISTORY_TAIL_MESSAGES,
+    MAX_INPUT_SYSTEM_CONTEXT_CHARS,
+    MAX_INPUT_USER_TEXT_CHARS,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +176,65 @@ def _extract_content_as_text(content) -> str:
     return str(content)
 
 
+def _truncate_inputs(request: AgentAssistRequest) -> AgentAssistRequest:
+    """Trim userText and systemContext if they exceed configured limits."""
+    if not ENABLE_PROMPT_COMPACT:
+        return request
+    changed = {}
+    if len(request.userText) > MAX_INPUT_USER_TEXT_CHARS:
+        changed["userText"] = request.userText[:MAX_INPUT_USER_TEXT_CHARS]
+        logger.debug("truncated userText %d→%d chars", len(request.userText), MAX_INPUT_USER_TEXT_CHARS)
+    ctx = request.systemContext or ""
+    if len(ctx) > MAX_INPUT_SYSTEM_CONTEXT_CHARS:
+        changed["systemContext"] = ctx[:MAX_INPUT_SYSTEM_CONTEXT_CHARS]
+    return request.model_copy(update=changed) if changed else request
+
+
+async def _maybe_compress_history(agent, config: dict, temperature: float) -> None:
+    if not ENABLE_HISTORY_COMPRESSION:
+        return
+    from infra.history_compressor import compress_history_if_needed
+    await compress_history_if_needed(
+        agent, config,
+        threshold_messages=HISTORY_COMPRESS_THRESHOLD_MESSAGES,
+        threshold_chars=HISTORY_COMPRESS_THRESHOLD_CHARS,
+        tail_messages=HISTORY_TAIL_MESSAGES,
+        compress_model_name=HISTORY_COMPRESS_MODEL,
+        temperature=temperature,
+    )
+
+
+def _maybe_write_usage(
+    *,
+    callback_handler: APICallbackHandler,
+    route_tier: str,
+    session_id: str,
+    request: AgentAssistRequest,
+    latency_ms: int,
+    success: bool = True,
+    error: str | None = None,
+) -> None:
+    """Fire-and-forget usage event write."""
+    if not ENABLE_USAGE_METRICS:
+        return
+    from infra.usage_writer import write_usage_event
+    asyncio.create_task(write_usage_event(
+        channel=getattr(request, "channel", None) or "api",
+        requestor=request.requestor,
+        thread_id=session_id,
+        run_id=callback_handler.root_run_id,
+        route_tier=route_tier,
+        model_id=callback_handler.model_id or None,
+        input_tokens=callback_handler.input_tokens,
+        output_tokens=callback_handler.output_tokens,
+        cache_read_tokens=callback_handler.cache_read_tokens,
+        cache_creation_tokens=callback_handler.cache_creation_tokens,
+        latency_ms=latency_ms,
+        success=success,
+        error=error,
+    ))
+
+
 def _build_config(
     request: AgentAssistRequest,
     callback_handler: APICallbackHandler,
@@ -182,22 +255,41 @@ async def process_request(
     request: AgentAssistRequest, agent_service
 ) -> AgentAssistResponse:
     start_time = time.time()
+    request = _truncate_inputs(request)
     callback_handler = APICallbackHandler()
-    agent = agent_service.create_agent_for_request(request, callback_handler)
+    agent, route_tier = agent_service.create_agent_for_request(request, callback_handler)
 
     session_id = request.sessionId or f"core-api-{int(time.time())}"
     config = _build_config(request, callback_handler, session_id)
 
     await repair_dangling_tool_calls(agent, config, session_id)
+    await _maybe_compress_history(agent, config, request.temperature or 0.1)
 
-    response = await agent.ainvoke(
-        {"messages": [HumanMessage(content=request.userText)]},
-        config=config,
-    )
+    error_str = None
+    success = True
+    try:
+        response = await agent.ainvoke(
+            {"messages": [HumanMessage(content=request.userText)]},
+            config=config,
+        )
+        ai_message = response["messages"][-1].content
+    except Exception as exc:
+        success = False
+        error_str = str(exc)
+        raise
+    finally:
+        latency_ms = int((time.time() - start_time) * 1000)
+        _maybe_write_usage(
+            callback_handler=callback_handler,
+            route_tier=route_tier,
+            session_id=session_id,
+            request=request,
+            latency_ms=latency_ms,
+            success=success,
+            error=error_str,
+        )
 
-    ai_message = response["messages"][-1].content
     completion_time = time.time() - start_time
-
     return AgentAssistResponse(
         response=_strip_thinking_blocks(_extract_content_as_text(ai_message)),
         tools_used=sorted(set(callback_handler.tools_used)),
@@ -218,11 +310,13 @@ async def stream_voice_sentences(
     without waiting for the full response. This lets TTS start on sentence 1
     while the LLM is still generating sentence 2.
     """
+    request = _truncate_inputs(request)
     callback_handler = APICallbackHandler()
-    agent = agent_service.create_agent_for_request(request, callback_handler)
+    agent, route_tier = agent_service.create_agent_for_request(request, callback_handler)
     session_id = request.sessionId or f"core-api-{int(time.time())}"
     config = _build_config(request, callback_handler, session_id)
     await repair_dangling_tool_calls(agent, config, session_id)
+    await _maybe_compress_history(agent, config, request.temperature or 0.1)
 
     buffer = ""
     thinking_state = {"inside_thinking": False, "carry": ""}
@@ -274,13 +368,16 @@ async def stream_request(
     request: AgentAssistRequest,
     agent_service,
 ) -> AsyncGenerator[StreamingMessage, None]:
+    start_time = time.time()
+    request = _truncate_inputs(request)
     callback_handler = APICallbackHandler()
-    agent = agent_service.create_agent_for_request(request, callback_handler)
+    agent, route_tier = agent_service.create_agent_for_request(request, callback_handler)
 
     session_id = request.sessionId or f"core-api-{int(time.time())}"
     config = _build_config(request, callback_handler, session_id)
 
     await repair_dangling_tool_calls(agent, config, session_id)
+    await _maybe_compress_history(agent, config, request.temperature or 0.1)
 
     run_id = None
     thinking_state = {"inside_thinking": False, "carry": ""}
@@ -356,6 +453,14 @@ async def stream_request(
 
     if run_id is None and callback_handler.root_run_id:
         run_id = callback_handler.root_run_id
+
+    _maybe_write_usage(
+        callback_handler=callback_handler,
+        route_tier=route_tier,
+        session_id=session_id,
+        request=request,
+        latency_ms=int((time.time() - start_time) * 1000),
+    )
 
     yield StreamingMessage(
         type=StreamingMessageType.COMPLETE,
