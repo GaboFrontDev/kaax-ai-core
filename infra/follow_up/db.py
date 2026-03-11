@@ -88,3 +88,46 @@ async def mark_follow_up_sent(thread_id: str) -> None:
             )
     except Exception:
         logger.exception("follow_up mark_follow_up_sent failed thread=%s", thread_id)
+
+
+async def get_conversation_memory(
+    thread_id: str,
+) -> tuple[str | None, str | None]:
+    """Return (memory_summary, memory_etapa) for the given thread, or (None, None)."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT memory_summary, memory_etapa FROM conversations WHERE thread_id = %s",
+                    (thread_id,),
+                )
+                row = await cur.fetchone()
+                if row:
+                    return row[0], row[1]
+    except Exception:
+        logger.exception("get_conversation_memory failed thread=%s", thread_id)
+    return None, None
+
+
+async def update_conversation_memory(
+    thread_id: str,
+    summary: str,
+    etapa: str,
+) -> None:
+    """Persist a new memory summary after a funnel stage change."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            await conn.execute(
+                """
+                UPDATE conversations
+                SET memory_summary = %s,
+                    memory_etapa = %s,
+                    memory_updated_at = NOW()
+                WHERE thread_id = %s
+                """,
+                (summary, etapa, thread_id),
+            )
+    except Exception:
+        logger.exception("update_conversation_memory failed thread=%s", thread_id)

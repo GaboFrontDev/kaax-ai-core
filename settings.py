@@ -167,8 +167,10 @@ MODEL_COST_TABLE_JSON = os.getenv(
     "MODEL_COST_TABLE_JSON",
     json.dumps({
         "us.amazon.nova-lite-v1:0": {"input_per_1m": 0.06, "output_per_1m": 0.24},
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0": {"input_per_1m": 0.80, "output_per_1m": 4.00},
         "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {"input_per_1m": 3.00, "output_per_1m": 15.00},
         "us.anthropic.claude-sonnet-4-6": {"input_per_1m": 3.00, "output_per_1m": 15.00},
+        "global.anthropic.claude-sonnet-4-6": {"input_per_1m": 3.00, "output_per_1m": 15.00},
     }),
 )
 
