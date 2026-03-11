@@ -158,6 +158,10 @@ HISTORY_COMPRESS_THRESHOLD_CHARS = _get_int("HISTORY_COMPRESS_THRESHOLD_CHARS", 
 HISTORY_TAIL_MESSAGES = _get_int("HISTORY_TAIL_MESSAGES", 6)
 HISTORY_COMPRESS_MODEL = os.getenv("HISTORY_COMPRESS_MODEL", MODEL_ROUTER_DEFAULT)
 
+# Memory summary: inject a Nova Lite summary of history into the system prompt.
+# Activates when ENABLE_PROMPT_COMPACT=true and history >= MEMORY_SUMMARY_THRESHOLD messages.
+MEMORY_SUMMARY_THRESHOLD = _get_int("MEMORY_SUMMARY_THRESHOLD", 6)
+
 # Cost table: model_id → {input_per_1m, output_per_1m} in USD
 MODEL_COST_TABLE_JSON = os.getenv(
     "MODEL_COST_TABLE_JSON",

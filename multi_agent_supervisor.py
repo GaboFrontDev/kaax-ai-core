@@ -31,7 +31,15 @@ from conversation_state import (
 )
 from model_builder import get_model
 from prompt_factory import PromptFactory
-from settings import BEDROCK_MODEL, DEFAULT_TEMPERATURE, DEMO_LINK, ENABLE_PROMPT_COMPACT, PRICING_LINK
+from settings import (
+    BEDROCK_MODEL,
+    DEFAULT_TEMPERATURE,
+    DEMO_LINK,
+    ENABLE_PROMPT_COMPACT,
+    MEMORY_SUMMARY_THRESHOLD,
+    MODEL_ROUTER_DEFAULT,
+    PRICING_LINK,
+)
 from tools import (
     capture_lead_if_ready_tool,
     conversation_loop_tool,
@@ -222,6 +230,7 @@ class MultiAgentSupervisor:
         turn_mode: str,
         system_context: str = "",
         loop_instruction: str = "",
+        memory_summary: str = "",
     ) -> str:
         base = self._pf.load_prompt("shared_base")
         specialist = self._pf.load_prompt(_SPECIALIST_PROMPT_NAMES[route])
@@ -229,11 +238,46 @@ class MultiAgentSupervisor:
         turn_instruction = _TURN_MODE_INSTRUCTIONS[turn_mode]
 
         parts = [self._tool_policy_block(), base, specialist, turn_instruction, summary]
+        if memory_summary:
+            parts.append(f"Memoria de conversación anterior:\n{memory_summary}")
         if loop_instruction:
             parts.append(loop_instruction)
         if system_context:
             parts.append(system_context)
         return "\n\n".join(parts)
+
+    async def _build_memory_summary(self, messages: List[BaseMessage]) -> str:
+        """Summarize existing conversation history into a compact memory block via Nova Lite."""
+        from model_builder import get_model
+
+        lines: list[str] = []
+        for m in messages:
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            content = content.strip()
+            if not content:
+                continue
+            role = "Cliente" if isinstance(m, HumanMessage) else "Kaax"
+            lines.append(f"{role}: {content[:200]}")
+
+        if not lines:
+            return ""
+
+        conversation_text = "\n".join(lines[:24])  # cap at 24 lines (~12 turns)
+        model = get_model(model_name=MODEL_ROUTER_DEFAULT, temperature=0, streaming=False)
+        try:
+            result = await model.ainvoke([
+                HumanMessage(content=(
+                    "Eres un asistente de memoria. Resume en máximo 4 puntos breves "
+                    "(nombre del cliente si lo mencionó, su negocio/producto, "
+                    "objetivo principal, etapa comercial) esta conversación de ventas. "
+                    "Máximo 80 palabras:\n\n" + conversation_text
+                ))
+            ])
+            summary = result.content if isinstance(result.content, str) else str(result.content)
+            return summary.strip()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("memory_summary: failed to generate, skipping")
+            return ""
 
     def _select_route(self, state: ConversationState, latest_text: str) -> str:
         force_knowledge = state.asked_pricing and not is_identity_question(latest_text)
@@ -283,6 +327,11 @@ class MultiAgentSupervisor:
         turn_mode = _detect_turn_mode(latest_text, prior_human_count)
         route = self._select_route(state, latest_text)
 
+        # Memory summary: compact history injected into system prompt via Nova Lite
+        memory_summary = ""
+        if ENABLE_PROMPT_COMPACT and len(all_messages) - 1 >= MEMORY_SUMMARY_THRESHOLD:
+            memory_summary = await self._build_memory_summary(all_messages[:-1])
+
         # Phase 3: conditional loop detection outside LLM (no tool call round-trip)
         loop_instruction = ""
         if ENABLE_PROMPT_COMPACT:
@@ -294,15 +343,15 @@ class MultiAgentSupervisor:
                 loop_instruction = decision.strategy_instruction
 
         system_prompt = self._compose_system_prompt(
-            state, route, turn_mode, system_context, loop_instruction
+            state, route, turn_mode, system_context, loop_instruction, memory_summary
         )
 
         logger.info(
             "Supervisor | route=%s turn_mode=%s etapa=%s vfit=%s intent=%s "
-            "demo=%s pricing=%s loop=%s",
+            "demo=%s pricing=%s loop=%s memory=%s",
             route, turn_mode, state.etapa_funnel, state.volume_fit(),
             state.intencion_compra, state.requested_demo, state.asked_pricing,
-            bool(loop_instruction),
+            bool(loop_instruction), bool(memory_summary),
         )
 
         return create_agent(
