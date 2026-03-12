@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,10 +18,13 @@ class PromptSchema(BaseModel):
 
 
 class PromptFactory:
-    def __init__(self):
+    def __init__(self, prompts_dir: Optional[str] = None):
         self._prompt_cache: Dict[str, str] = {}
+        self._prompts_dir = Path(prompts_dir) if prompts_dir else None
 
     def _get_prompts_dir(self) -> Path:
+        if self._prompts_dir:
+            return self._prompts_dir
         return Path(__file__).resolve().parent / "prompts"
 
     def load_prompt(self, name: str) -> str:

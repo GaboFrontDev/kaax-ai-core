@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from agent import build_agent
 from api.models import AgentAssistRequest
+from client_config import ClientConfig
 from session_manager import SessionManager
 from settings import (
     BEDROCK_MODEL,
@@ -20,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class AgentService:
-    def __init__(self, session_manager: SessionManager):
+    def __init__(self, session_manager: SessionManager, client_config: Optional[ClientConfig] = None):
         self.session_manager = session_manager
+        self.client_config = client_config
 
     def create_agent_for_request(
         self, request: AgentAssistRequest, callback_handler: Any
@@ -57,6 +59,7 @@ class AgentService:
             email=request.requestor,
             exclude_tools=request.excludeTools,
             max_tokens=max_tokens,
+            client_config=self.client_config,
         )
 
         logger.info(

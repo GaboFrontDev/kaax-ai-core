@@ -1,11 +1,13 @@
-"""Minimal agent builder that keeps the original project conventions."""
+"""Agent builder — wires ClientConfig into MultiAgentSupervisor or legacy agent."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List, Optional
 
 from langchain.agents import create_agent
 
+from client_config import ClientConfig
 from model_builder import get_model
 from multi_agent_supervisor import MultiAgentSupervisor
 from prompt_factory import PromptFactory
@@ -36,25 +38,6 @@ Tool policy:
 """.strip()
 
 
-def build_tools(
-    checkpointer: Optional[SessionManager] = None,
-    email: str = "",
-    stores: Optional[dict] = None,
-):
-    """Return a minimal list of example tools.
-
-    Signature intentionally mirrors the legacy project convention.
-    """
-    _ = checkpointer
-    _ = email
-    _ = stores
-    return [
-        conversation_loop_tool,
-        # echo_tool,
-        simple_math_tool,
-    ]
-
-
 def build_agent(
     model_name: str = BEDROCK_MODEL,
     temperature: float = DEFAULT_TEMPERATURE,
@@ -68,12 +51,13 @@ def build_agent(
     stores: Optional[dict] = None,
     exclude_tools: Optional[List[str]] = None,
     max_tokens: Optional[int] = None,
+    client_config: Optional[ClientConfig] = None,
 ):
-    """Build and return a LangChain/LangGraph agent.
+    """Build and return a LangGraph agent.
 
-    When MULTI_AGENT_ENABLED is True, returns a MultiAgentSupervisor instance
-    that routes each turn to the appropriate specialist agent.
-    When False, falls back to the original single-agent behaviour.
+    When MULTI_AGENT_ENABLED is True, returns a MultiAgentSupervisor.
+    Pass a ClientConfig to use a custom client; defaults to Kaax AI sales.
+    When MULTI_AGENT_ENABLED is False, falls back to legacy single-agent.
     """
     if middleware is None:
         middleware = []
@@ -83,19 +67,23 @@ def build_agent(
 
     # --- Multi-agent path ---
     if MULTI_AGENT_ENABLED:
+        if client_config is None:
+            raise ValueError(
+                "MULTI_AGENT_ENABLED=true requires a ClientConfig. "
+                "Pass client_config=build_client_config() from your client repo."
+            )
         return MultiAgentSupervisor(
+            client_config=client_config,
             checkpointer=checkpointer,
             model_name=model_name,
             temperature=temperature,
-            demo_link=DEMO_LINK,
-            pricing_link=PRICING_LINK,
             exclude_tools=exclude_tools or [],
             max_tokens=max_tokens,
         )
 
     # --- Legacy single-agent fallback ---
     if tools is None:
-        tools = build_tools(checkpointer=checkpointer, email=email, stores=stores)
+        tools = [conversation_loop_tool, simple_math_tool]
 
     if model is None:
         model = get_model(model_name=model_name, temperature=temperature)

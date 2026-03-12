@@ -1,6 +1,7 @@
-"""Deterministic ConversationState for Kaax AI multi-agent supervisor.
+"""Kaax AI ConversationState — implementation of BaseConversationState.
 
 All extraction is regex/keyword-based — no LLM calls, no side effects.
+This is the reference client implementation. Other clients subclass BaseConversationState.
 """
 
 from __future__ import annotations
@@ -10,75 +11,20 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-
-# ---------------------------------------------------------------------------
-# Normalization helpers
-# ---------------------------------------------------------------------------
-
-
-def normalize(text: str) -> str:
-    """Lowercase, strip accents, collapse whitespace."""
-    nfkd = unicodedata.normalize("NFKD", text)
-    ascii_text = nfkd.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"\s+", " ", ascii_text).strip().lower()
-
-
-# ---------------------------------------------------------------------------
-# Greeting detector
-# ---------------------------------------------------------------------------
-
-_GREETING_TOKENS = frozenset(
-    [
-        "hola",
-        "buenas",
-        "hey",
-        "hi",
-        "hello",
-        "saludos",
-        "buenos",
-        "buen",
-        "buenas",
-        "ola",
-    ]
+from base_conversation_state import (
+    BaseConversationState,
+    extract_contact_email,
+    extract_contact_phone,
+    is_greeting as _is_greeting,
+    is_identity_question as _is_identity_question,
+    normalize as _normalize,
 )
-_GREETING_TRIGGER_WORDS = frozenset(["ai", "kaax"])
 
 
-def is_greeting(text: str) -> bool:
-    """Return True if the message is a greeting or AI trigger."""
-    norm = normalize(text)
-    tokens = set(re.split(r"[\s,!?.]+", norm))
-    if tokens & _GREETING_TOKENS:
-        return True
-    if tokens & _GREETING_TRIGGER_WORDS:
-        return True
-    # Short message containing a greeting token
-    if len(norm.split()) <= 4 and any(g in norm for g in _GREETING_TOKENS):
-        return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Identity question detector
-# ---------------------------------------------------------------------------
-
-_IDENTITY_PATTERNS = [
-    r"quien\s+eres",
-    r"que\s+eres",
-    r"que\s+haces",
-    r"como\s+te\s+llamas",
-    r"eres\s+(un[ao]?\s+)?(bot|robot|ia|agente|humano|persona)",
-    r"habla(s)?\s+con\s+(un\s+)?(humano|persona|agente|robot)",
-    r"(eres|es\s+esto)\s+(humano|persona|real|ia|artificial)",
-    r"presentate",
-    r"presentacion",
-]
-
-
-def is_identity_question(text: str) -> bool:
-    """Return True if user is asking who/what the agent is."""
-    norm = normalize(text)
-    return any(re.search(pat, norm) for pat in _IDENTITY_PATTERNS)
+# Re-export generic utilities so existing imports keep working
+normalize = _normalize
+is_greeting = _is_greeting
+is_identity_question = _is_identity_question
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +230,8 @@ _INTENT_PRIORITY: dict[str, int] = {"baja": 0, "media": 1, "alta": 2}
 
 
 @dataclass
-class ConversationState:
-    """Deterministic state extracted from user turns — no LLM required."""
+class ConversationState(BaseConversationState):
+    """Kaax AI deterministic state — implements BaseConversationState."""
 
     etapa_funnel: str = "primer_contacto"
     negocio_tipo: Optional[str] = None  # ventas / atencion / citas / marketing
@@ -296,8 +242,6 @@ class ConversationState:
     intencion_compra: IntencioCompra = "baja"
     requested_demo: bool = False
     asked_pricing: bool = False
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
 
     # internal: track goal menu selection raw text
     _negocio_raw: Optional[str] = field(default=None, repr=False)
@@ -387,16 +331,26 @@ class ConversationState:
             if m:
                 self.contact_email = m.group(0)
 
-        # Phone (8+ digits)
+        # Email / phone (generic extractors from base)
+        if self.contact_email is None:
+            self.contact_email = extract_contact_email(text)
         if self.contact_phone is None:
-            m = re.search(r"\b(\+?\d[\d\s\-]{7,}\d)\b", text)
-            if m:
-                candidate = re.sub(r"[\s\-]", "", m.group(1))
-                if len(candidate) >= 8:
-                    self.contact_phone = candidate
+            self.contact_phone = extract_contact_phone(text)
 
         # Update stage
         self.etapa_funnel = infer_stage(self)
+
+    def choose_route(self) -> str:
+        """Implement BaseConversationState.choose_route() using Kaax routing logic."""
+        return choose_specialist_route(self)
+
+    def summary_block(self, **links: str) -> str:
+        """Implement BaseConversationState.summary_block()."""
+        return state_summary_block(
+            self,
+            demo_link=links.get("demo_link", ""),
+            pricing_link=links.get("pricing_link", ""),
+        )
 
 
 # ---------------------------------------------------------------------------
