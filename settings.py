@@ -9,7 +9,11 @@ from os.path import dirname, join
 from dotenv import load_dotenv
 
 
-load_dotenv(join(dirname(__file__), ".env"))
+# Load .env from the core directory, then from the parent directory (client root).
+# Parent-directory values are only applied if not already set, so core/.env wins.
+_core_dir = dirname(__file__)
+load_dotenv(join(_core_dir, ".env"))
+load_dotenv(join(dirname(_core_dir), ".env"))
 
 
 def _get_bool(name: str, default: bool) -> bool:
