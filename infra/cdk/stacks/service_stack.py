@@ -70,7 +70,7 @@ def load_deployment_config(
 ) -> DeploymentConfig:
     config_path = Path(config_file)
     if not config_path.is_absolute():
-        config_path = Path(__file__).resolve().parents[1] / config_path
+        config_path = Path.cwd() / config_path
 
     if not config_path.exists():
         raise ValueError(
