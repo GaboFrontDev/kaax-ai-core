@@ -1,264 +1,164 @@
-# Core
+# Core Engine
 
-Core aislado para construir agentes con LangChain/LangGraph + FastAPI, incluyendo:
+Engine genérico para construir agentes conversacionales con LangGraph + FastAPI + AWS Bedrock.
 
-- Patron `settings -> model_builder -> agent`.
-- Modelo Bedrock.
-- API principal (`/api/agent/assist`, `/health`).
-- Checkpoints de LangGraph en PostgreSQL.
-- Canal WhatsApp Meta (webhook verificacion + inbound/outbound).
-- Capa Chainlit conectada al API.
+Diseñado para correr como submódulo dentro de un **repo cliente** que aporta la lógica específica
+del negocio (prompts, tools, estado del funnel). El engine no sabe nada del cliente — recibe un
+`ClientConfig` al arrancar y lo usa para todo.
 
-## Estructura principal
+---
 
-- `settings.py`
-- `model_builder.py`
-- `agent.py`
-- `tools/*`
-- `prompts/agent.yaml`
-- `session_manager.py`
-- `sql_utilities.py`
-- `api/*`
-- `infra/adapters/*` (selector de adapters por canal/proveedor)
-- `infra/deepgram/*` (cliente compartido STT/TTS)
-- `infra/whatsapp_calls/*` (wrappers de Deepgram para llamadas WhatsApp/WebRTC)
-- `infra/whatsapp_meta/*`
-- `infra/chainlit/*`
+## Arquitectura
 
-## Setup rapido
+```
+WhatsApp / Twilio / Chainlit
+        ↓
+    FastAPI (api/)
+        ↓
+  AgentService  →  build_agent(client_config)
+        ↓
+MultiAgentSupervisor
+        ↓
+  ConversationState.choose_route()
+        ↓
+  Specialist Agent (LangGraph) → Bedrock (Claude)
+        ↓
+  Respuesta al canal
+```
 
-1. Copia `.env.example` a `.env` y completa credenciales.
-2. Instala dependencias:
+### Flujo por turno
+
+1. El canal llama al handler correspondiente en `api/`
+2. `AgentService` decide modelo (Haiku default, Sonnet para queries complejas)
+3. `MultiAgentSupervisor` carga historial del checkpoint (Postgres)
+4. Si hay >= 6 mensajes y la etapa cambio → `context_refiner` genera resumen con Nova Lite
+5. El estado del cliente (`ClientConfig.state_class`) determina la ruta (specialist)
+6. El specialist genera la respuesta con los prompts y tools del cliente
+
+---
+
+## Integracion con un repo cliente
+
+El engine se incluye como submodulo de git:
+
+```bash
+git submodule add git@github.com:GaboFrontDev/kaax-ai-core.git core
+```
+
+El repo cliente necesita:
+
+1. **`client.py`** — implementa `build_client_config() -> ClientConfig`
+2. **`main.py`** — monta el `ClientConfig` antes de importar el app:
+   ```python
+   sys.path.insert(0, str(Path(__file__).resolve().parent / "core"))
+   from client import build_client_config
+   from api.dependencies import set_client_config
+   set_client_config(build_client_config())
+   from api.main import app
+   ```
+3. **`states/`** — subclase de `BaseConversationState` con la logica del funnel
+4. **`tools/`** — tools especificas del cliente
+5. **`prompts/`** — YAMLs de prompts; los nombres deben coincidir con lo que retorna `choose_route()`
+6. **`config.yaml`** — declaracion del agente (modelo, tools, prompts, tool_policy)
+
+Ver [kaax-client](https://github.com/GaboFrontDev/kaax-client) como ejemplo de implementacion.
+
+---
+
+## Archivos clave
+
+| Archivo | Que hace |
+|---|---|
+| `agent.py` | `build_agent()` — entry point, devuelve `MultiAgentSupervisor` |
+| `multi_agent_supervisor.py` | Routing por etapa del funnel, inyeccion de memoria |
+| `base_conversation_state.py` | Clase base abstracta para el estado del cliente |
+| `client_config.py` | `ClientConfig` dataclass + `load_client_config()` desde YAML |
+| `api/agent_service.py` | Model router: Haiku default, Sonnet para queries complejas |
+| `api/handlers.py` | `process_request`, `stream_request`, `stream_voice_sentences` |
+| `api/dependencies.py` | `set_client_config()` / `get_client_config()` DI container |
+| `infra/context_refiner.py` | Resumen de historial con Nova Lite al cambiar etapa |
+| `infra/model_router.py` | Haiku para msgs simples, Sonnet para complejos |
+| `session_manager.py` | Wrapper sobre `AsyncPostgresSaver` |
+| `settings.py` | Variables de entorno con defaults |
+| `prompt_factory.py` | Carga YAMLs de prompts (desde `prompts/` del cliente o del engine) |
+| `infra/cdk/stacks/service_stack.py` | CDK stack generico para ECS Fargate |
+| `infra/cdk/app.py` | CDK app entry point — lee `dockerfile_dir` del cliente via context |
+
+---
+
+## Desarrollo local (standalone)
+
+Para correr el engine directamente sin repo cliente:
 
 ```bash
 make sync
-```
-
-Si vas a usar Chainlit:
-
-```bash
-make sync-channels
-```
-
-## Correr servicios
-
-API (FastAPI):
-
-```bash
+make docker-up    # Postgres local
 make run-api
 ```
 
-Chainlit (UI local, conectada al API):
+Requiere un `.env` en la raiz con al menos:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres
+API_TOKENS=dev-token
+MULTI_AGENT_ENABLED=true
+```
+
+---
+
+## Deploy CDK (desde el repo cliente)
+
+El CDK esta en `infra/cdk/`. El repo cliente lo invoca pasando `dockerfile_dir` para que
+la imagen se construya desde la raiz del cliente:
 
 ```bash
-make run-chainlit
+cd infra/cdk
+cdk deploy \
+  -c config=config/environments.json \
+  -c env=dev \
+  -c agent=default \
+  -c dockerfile_dir=/ruta/al/repo-cliente
 ```
 
-Para ocultar/mostrar eventos de tools en la UI:
+Los repos clientes tienen sus propios scripts en `ops/` que hacen esto automaticamente.
+
+### Context keys de CDK
+
+| Key | Descripcion |
+|---|---|
+| `config` | Path relativo (desde `cdk.json`) a `environments.json` |
+| `env` | Nombre del entorno (dev, prod) |
+| `agent` | Nombre del agente (default, sales, …) |
+| `dockerfile_dir` | Ruta absoluta al directorio con el `Dockerfile` |
+
+---
+
+## Cost optimization
+
+| Flag | Default | Efecto |
+|---|---|---|
+| `ENABLE_MODEL_ROUTER` | false | Haiku para msgs simples, Sonnet para complejos |
+| `ENABLE_PROMPT_COMPACT` | false | Input truncado, max_tokens reducido |
+| `ENABLE_USAGE_METRICS` | false | Escribe a `llm_usage_events` por turno |
+| `MODEL_ROUTER_DEFAULT` | Haiku 4.5 | Modelo barato |
+| `MODEL_ROUTER_FALLBACK` | Sonnet 4.6 | Modelo caro para queries complejas |
+
+---
+
+## Migraciones
 
 ```bash
-make run-chainlit CHAINLIT_SHOW_TOOL_EVENTS=true
+uv run alembic upgrade head
 ```
 
-## Endpoints
+Siempre migrar antes de deployar cuando hay migraciones nuevas en `migrations/versions/`.
 
-- `GET /health`
-- `GET /health/live`
-- `POST /api/agent/assist`
-- `GET /api/channels/whatsapp/meta/webhook` (verificacion Meta)
-- `POST /api/channels/whatsapp/meta/webhook` (eventos inbound Meta)
-- `GET /api/channels/whatsapp/meta/calls` (verificacion webhook de llamadas)
-- `POST /api/channels/whatsapp/meta/calls` (eventos de WhatsApp Calling)
-- `GET /calls` (alias de verificacion para suscriptor de llamadas)
-- `POST /calls` (alias de eventos para suscriptor de llamadas)
+---
 
-## Variables clave de WhatsApp Meta
-
-En `.env`:
-
-- `WHATSAPP_PROVIDER` (default: `meta`)
-- `WHATSAPP_META_VERIFY_TOKEN`
-- `WHATSAPP_META_APP_SECRET`
-- `WHATSAPP_META_ACCESS_TOKEN`
-- `WHATSAPP_META_API_VERSION`
-- `WHATSAPP_META_PHONE_NUMBER_ID`
-- `WHATSAPP_META_PROMPT_NAME`
-- `WHATSAPP_META_MODEL_NAME`
-- `WHATSAPP_META_TEMPERATURE`
-
-## Variables clave de Voice
-
-En `.env`:
-
-- `VOICE_PROVIDER` (default: `twilio`)
-- `TWILIO_VOICE_AUTH_TOKEN`
-- `TWILIO_VOICE_BASE_URL`
-- `TWILIO_VOICE_PROMPT_NAME`
-- `TWILIO_VOICE_MODEL_NAME`
-- `TWILIO_VOICE_TEMPERATURE`
-
-## Variables clave de WhatsApp Calling
-
-En `.env`:
-
-- `WHATSAPP_CALLS_VERIFY_TOKEN` (si está vacío usa `WHATSAPP_META_VERIFY_TOKEN`)
-- `WHATSAPP_CALLS_APP_SECRET` (si está vacío usa `WHATSAPP_META_APP_SECRET`)
-- `WHATSAPP_CALLS_PROMPT_NAME` (default: `voice_agent`)
-- `WHATSAPP_CALLS_MODEL_NAME`
-- `WHATSAPP_CALLS_TEMPERATURE`
-- `WHATSAPP_CALLS_INCLUDE_TTS_PAYLOAD` (debug, default: `false`)
-
-Nota: para negociación SDP/WebRTC (`answer` en `POST /calls`) necesitas instalar `aiortc`.
-
-## Pruebas de humo
-
-Health:
+## Tests
 
 ```bash
-make health
+make test   # pytest
+make lint   # ruff check
+make fmt    # ruff format
 ```
-
-Assist:
-
-```bash
-make assist
-```
-
-Verificacion webhook WhatsApp:
-
-```bash
-make webhook-verify WHATSAPP_VERIFY_TOKEN=<tu_token>
-```
-
-## Deploy AWS (CDK)
-
-1. Ajusta `infra/cdk/config/environments.json`.
-   Para crear un nuevo env/agent base automaticamente:
-
-```bash
-make cdk-init-env ENV=dev AGENT=clinicas DOMAIN=clinicas.kaax.ai
-```
-
-2. Exporta variables secretas requeridas en tu shell.
-3. Sincroniza secretos y despliega:
-
-```bash
-make cdk-bootstrap
-make cdk-sync-secrets CDK_SECRET_NAME=kaax/dev/default
-make cdk-diff ENV=dev AGENT=default
-make cdk-deploy ENV=dev AGENT=default
-```
-
-## Como desplegar un nuevo agente
-
-Ejemplo: agente `clinicas` en `dev` con dominio `clinicas.kaax.ai`.
-
-1. Crea el scaffold del agente en CDK:
-
-```bash
-make cdk-init-env ENV=dev AGENT=clinicas DOMAIN=clinicas.kaax.ai
-```
-
-2. Revisa `infra/cdk/config/environments.json` y confirma:
-- `service_name` unico
-- `secret_name` propio (ejemplo: `kaax/dev/clinicas`)
-- `certificate_arn` valido para el subdominio
-- `secret_keys` requeridos por el runtime que vas a usar
-
-Ejemplo de bloque listo para pegar (solo cambia los placeholders):
-
-```json
-{
-  "dev": {
-    "account": "301782007691",
-    "region": "us-east-1",
-    "agents": {
-      "clinicas": {
-        "service_name": "kaax-dev-clinicas",
-        "cpu": 512,
-        "memory_mib": 1024,
-        "cpu_architecture": "X86_64",
-        "desired_count": 1,
-        "min_capacity": 1,
-        "max_capacity": 2,
-        "container_port": 8200,
-        "health_check_path": "/health/live",
-        "deregistration_delay_seconds": 30,
-        "public_load_balancer": true,
-        "enable_https": true,
-        "redirect_http": true,
-        "certificate_arn": "<CAMBIAR_ACM_CERT_ARN>",
-        "public_base_url": "https://clinicas.kaax.ai",
-        "environment": {
-          "AUDRAI_DEPLOY_ENV": "dev",
-          "AGENT_RUNTIME_BACKEND": "langgraph_mvp",
-          "CHECKPOINT_BACKEND": "postgres",
-          "CRM_BACKEND": "postgres",
-          "INTERACTION_METRICS_BACKEND": "postgres",
-          "KNOWLEDGE_BACKEND": "postgres",
-          "KNOWLEDGE_TABLE_NAME": "agent_knowledge",
-          "LOG_FORMAT": "json",
-          "LOG_LEVEL": "INFO",
-          "MULTI_AGENT_ENABLED": "true",
-          "DEMO_LINK": "<CAMBIAR_LINK_DEMO>",
-          "PRICING_LINK": "<CAMBIAR_LINK_PRECIOS>",
-          "WHATSAPP_NOTIFY_TO": "<CAMBIAR_NUMERO_DESTINO>"
-        },
-        "secret_name": "kaax/dev/clinicas",
-        "secret_keys": [
-          "API_TOKENS",
-          "DATABASE_URL",
-          "AWS_REGION",
-          "BEDROCK_MODEL",
-          "DEFAULT_PROMPT_NAME",
-          "WHATSAPP_META_VERIFY_TOKEN",
-          "WHATSAPP_META_APP_SECRET",
-          "WHATSAPP_META_ACCESS_TOKEN",
-          "WHATSAPP_META_PHONE_NUMBER_ID"
-        ]
-      }
-    }
-  }
-}
-```
-
-3. Sincroniza secretos al secret nuevo:
-
-```bash
-make cdk-sync-secrets CDK_SECRET_NAME=kaax/dev/clinicas
-```
-
-4. Previsualiza cambios:
-
-```bash
-make cdk-diff ENV=dev AGENT=clinicas
-```
-
-5. Despliega:
-
-```bash
-make cdk-deploy ENV=dev AGENT=clinicas
-```
-
-6. Obtén valores DNS para tu gestor de dominio:
-
-```bash
-make cdk-dns-config ENV=dev AGENT=clinicas DOMAIN=clinicas.kaax.ai
-```
-
-7. Verifica salud del nuevo agente:
-
-```bash
-make awsctl AWSCTL_ARGS="health dev clinicas"
-```
-
-## Consideraciones
-
-- Cada `AGENT` despliega stack y servicio ECS independientes (`Kaax-<env>-<agent>`).
-- Usa `secret_name` separado por agente para evitar colisiones de credenciales.
-- No dependas de keys legacy (`DB_DSN`, `MODEL_NAME`, `SMALL_MODEL`, `PHONE_NUMBER_ID`) en nuevos agentes.
-- Si activas HTTPS (`enable_https=true`), el `certificate_arn` debe cubrir el dominio final.
-- `public_base_url` no crea DNS automaticamente; debes crear el CNAME en tu proveedor.
-- Si usas voz/calls, agrega tambien `TWILIO_VOICE_AUTH_TOKEN`, `TWILIO_ACCOUNT_SID`, `DEEPGRAM_KEY`.
-- El primer deploy puede tardar mas por build y push de imagen.
-- Si hay rollback en progreso, espera `UPDATE_ROLLBACK_COMPLETE` antes de redeploy.
