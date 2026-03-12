@@ -10,5 +10,4 @@ __pycache__/
 .env.local
 infra/cdk/.venv/
 infra/cdk/cdk.out/
-infra/cdk/config/environments.json
 .DS_Store

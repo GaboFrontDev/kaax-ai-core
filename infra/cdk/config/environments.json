@@ -1,0 +1,50 @@
+{
+  "dev": {
+    "account": "111111111111",
+    "region": "us-east-1",
+    "agents": {
+      "default": {
+        "service_name": "myagent-dev-default",
+        "cpu": 512,
+        "memory_mib": 1024,
+        "cpu_architecture": "X86_64",
+        "desired_count": 1,
+        "min_capacity": 1,
+        "max_capacity": 2,
+        "container_port": 8200,
+        "health_check_path": "/health/live",
+        "deregistration_delay_seconds": 30,
+        "public_load_balancer": true,
+        "enable_https": false,
+        "redirect_http": true,
+        "certificate_arn": null,
+        "public_base_url": null,
+        "environment": {
+          "APP_DEPLOY_ENV": "dev",
+          "LOG_FORMAT": "json",
+          "LOG_LEVEL": "INFO",
+          "MULTI_AGENT_ENABLED": "true",
+          "ENABLE_USAGE_METRICS": "true",
+          "ENABLE_MODEL_ROUTER": "true",
+          "ENABLE_PROMPT_COMPACT": "true",
+          "MODEL_ROUTER_DEFAULT": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "MODEL_ROUTER_FALLBACK": "global.anthropic.claude-sonnet-4-6",
+          "MODEL_ROUTER_COMPLEXITY_CHARS": "300",
+          "MODEL_MAX_OUTPUT_TOKENS": "320"
+        },
+        "secret_name": "myagent/dev/default",
+        "secret_keys": [
+          "API_TOKENS",
+          "DATABASE_URL",
+          "AWS_REGION",
+          "BEDROCK_MODEL",
+          "DEFAULT_PROMPT_NAME",
+          "WHATSAPP_META_VERIFY_TOKEN",
+          "WHATSAPP_META_APP_SECRET",
+          "WHATSAPP_META_ACCESS_TOKEN",
+          "WHATSAPP_META_PHONE_NUMBER_ID"
+        ]
+      }
+    }
+  }
+}
