@@ -64,7 +64,7 @@ stack_env = cdk.Environment(
 
 ServiceStack(
     app,
-    config.service_name,
+    config.cfn_stack_name or config.service_name,
     config=config,
     env=stack_env,
 )

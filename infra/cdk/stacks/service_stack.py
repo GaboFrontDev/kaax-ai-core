@@ -53,6 +53,9 @@ class DeploymentConfig:
     secret_name: str | None = None
     secret_arn: str | None = None
     secret_keys: list[str] = field(default_factory=list)
+    # CloudFormation stack name. Defaults to service_name when empty.
+    # Set explicitly to preserve an existing stack name after refactors.
+    cfn_stack_name: str = ""
     # Absolute path to the directory containing the Dockerfile.
     # Defaults to the repo root three levels above this file (core repo layout).
     # Client repos should pass their own root via CDK context `dockerfile_dir`.
@@ -120,6 +123,7 @@ def load_deployment_config(
         secret_name=agent_raw.get("secret_name"),
         secret_arn=agent_raw.get("secret_arn"),
         secret_keys=[str(key) for key in (agent_raw.get("secret_keys", []) or [])],
+        cfn_stack_name=str(agent_raw.get("cfn_stack_name", "")),
     )
 
 
