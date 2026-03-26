@@ -49,6 +49,8 @@ class DeploymentConfig:
     health_check_grace_seconds: int = 120
     deregistration_delay_seconds: int = 30
     vpc_id: str | None = None
+    nat_gateways: int = 1
+    assign_public_ip: bool = False
     environment: dict[str, str] = field(default_factory=dict)
     secret_name: str | None = None
     secret_arn: str | None = None
@@ -116,6 +118,8 @@ def load_deployment_config(
         health_check_grace_seconds=int(agent_raw.get("health_check_grace_seconds", 120)),
         deregistration_delay_seconds=int(agent_raw.get("deregistration_delay_seconds", 30)),
         vpc_id=agent_raw.get("vpc_id"),
+        nat_gateways=int(agent_raw.get("nat_gateways", 1)),
+        assign_public_ip=bool(agent_raw.get("assign_public_ip", False)),
         environment={
             str(key): str(value)
             for key, value in (agent_raw.get("environment", {}) or {}).items()
@@ -144,7 +148,7 @@ class ServiceStack(Stack):
             vpc = ec2.Vpc(
                 self,
                 "Vpc",
-                nat_gateways=1,
+                nat_gateways=config.nat_gateways,
                 max_azs=2,
             )
 
@@ -288,6 +292,11 @@ class ServiceStack(Stack):
             ),
             certificate=certificate,
             redirect_http=(config.redirect_http if config.enable_https else False),
+            assign_public_ip=config.assign_public_ip,
+            task_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PUBLIC if config.assign_public_ip
+                else ec2.SubnetType.PRIVATE_WITH_EGRESS
+            ),
         )
 
         fargate_service.target_group.configure_health_check(
