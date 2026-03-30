@@ -92,7 +92,7 @@ def _build_digest(conversations: list[dict], lookback_hours: int) -> list[str]:
     return messages
 
 
-async def _run_once() -> None:
+async def _run_once(lookback_hours_override: int | None = None) -> None:
     if not DIGEST_INTERVAL_HOURS:
         return
     if not WHATSAPP_NOTIFY_TO or not WHATSAPP_META_ACCESS_TOKEN or not WHATSAPP_META_PHONE_NUMBER_ID:
@@ -101,13 +101,14 @@ async def _run_once() -> None:
 
     from infra.whatsapp_meta.client import send_meta_text_message
 
-    conversations = await get_conversation_digest(lookback_hours=DIGEST_LOOKBACK_HOURS)
+    lookback = lookback_hours_override if lookback_hours_override is not None else DIGEST_LOOKBACK_HOURS
+    conversations = await get_conversation_digest(lookback_hours=lookback)
 
     if not conversations:
-        logger.info("digest_scheduler: no conversations in last %dh", DIGEST_LOOKBACK_HOURS)
+        logger.info("digest_scheduler: no conversations in last %dh", lookback)
         return
 
-    messages = _build_digest(conversations, DIGEST_LOOKBACK_HOURS)
+    messages = _build_digest(conversations, lookback)
     for msg in messages:
         try:
             await send_meta_text_message(
@@ -121,8 +122,8 @@ async def _run_once() -> None:
             logger.exception("digest_scheduler: failed to send message")
 
     logger.info(
-        "digest_scheduler: sent %d message(s) covering %d conversation(s)",
-        len(messages), len(conversations),
+        "digest_scheduler: sent %d message(s) covering %d conversation(s) (lookback=%dh)",
+        len(messages), len(conversations), lookback,
     )
 
 
