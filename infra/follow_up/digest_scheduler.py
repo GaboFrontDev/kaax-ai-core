@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from infra.follow_up.db import get_conversation_digest
 from settings import (
@@ -59,17 +60,26 @@ def _build_digest(conversations: list[dict], lookback_hours: int) -> list[str]:
     blocks = [header]
     for i, conv in enumerate(conversations, 1):
         name = conv.get("contact_name") or "Desconocido"
-        phone = conv.get("phone_number") or "—"
+        raw_phone = conv.get("phone_number") or ""
         etapa = conv.get("memory_etapa") or "—"
         etapa_label = _ETAPA_LABELS.get(etapa, f"📌 {etapa}")
         summary = conv.get("memory_summary") or "Sin resumen aún"
         demo = "✅ Sí" if conv.get("demo_requested") else "❌ No"
         last = _time_ago(conv["last_message_at"]) if conv.get("last_message_at") else "—"
 
+        # Strip leading "521" → "52" for display (MX mobile prefix quirk)
+        display_phone = raw_phone.lstrip("+")
+        if display_phone.startswith("521") and len(display_phone) == 13:
+            display_phone = "52" + display_phone[3:]  # drop the extra 1
+
+        wa_text = quote("Hola! Te escribo desde Kaax AI 👋", safe="")
+        wa_link = f"https://wa.me/{display_phone}?text={wa_text}" if display_phone else "—"
+
         snippet = summary[:200] + ("…" if len(summary) > 200 else "")
         block = (
             f"\n*{i}. {name}*\n"
-            f"📱 {phone}\n"
+            f"📱 +{display_phone}\n"
+            f"💬 {wa_link}\n"
             f"Etapa: {etapa_label} | Demo: {demo}\n"
             f"Último mensaje: {last}\n"
             f"_{snippet}_"
