@@ -34,6 +34,7 @@ from settings import (
     WHATSAPP_META_PROMPT_NAME,
     WHATSAPP_META_TEMPERATURE,
     WHATSAPP_META_VERIFY_TOKEN,
+    WHATSAPP_NOTIFY_TO,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,20 @@ async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None
     session_id = assist_request.sessionId or inbound.from_number
 
     # Track conversation for follow-up scheduling
-    await upsert_conversation(thread_id=session_id, phone_number=inbound.from_number)
+    is_new = await upsert_conversation(thread_id=session_id, phone_number=inbound.from_number)
+
+    if is_new and WHATSAPP_NOTIFY_TO and WHATSAPP_META_ACCESS_TOKEN and WHATSAPP_META_PHONE_NUMBER_ID:
+        try:
+            await send_meta_text_message(
+                api_version=WHATSAPP_META_API_VERSION,
+                phone_number_id=phone_number_id,
+                access_token=WHATSAPP_META_ACCESS_TOKEN,
+                to=WHATSAPP_NOTIFY_TO,
+                text=f"👋 Nueva conversación iniciada\n📱 Número: {inbound.from_number}",
+            )
+            logger.info("new_conversation notification sent for %s", inbound.from_number)
+        except Exception:
+            logger.exception("new_conversation notification failed for %s", inbound.from_number)
 
     lock = _session_lock(session_id)
     async with lock:

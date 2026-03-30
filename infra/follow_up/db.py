@@ -15,23 +15,31 @@ async def upsert_conversation(
     thread_id: str,
     phone_number: str,
     channel: str = "whatsapp",
-) -> None:
-    """Record / refresh a conversation. Called on every inbound message."""
+) -> bool:
+    """Record / refresh a conversation. Called on every inbound message.
+
+    Returns True if this is a brand-new conversation (first message ever).
+    """
     url = get_database_url()
     try:
         async with await psycopg.AsyncConnection.connect(url) as conn:
-            await conn.execute(
-                """
-                INSERT INTO conversations (thread_id, channel, phone_number, last_message_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (thread_id) DO UPDATE SET
-                    last_message_at = NOW(),
-                    phone_number = COALESCE(EXCLUDED.phone_number, conversations.phone_number)
-                """,
-                (thread_id, channel, phone_number),
-            )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO conversations (thread_id, channel, phone_number, last_message_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (thread_id) DO UPDATE SET
+                        last_message_at = NOW(),
+                        phone_number = COALESCE(EXCLUDED.phone_number, conversations.phone_number)
+                    RETURNING (xmax = 0) AS is_new
+                    """,
+                    (thread_id, channel, phone_number),
+                )
+                row = await cur.fetchone()
+                return bool(row and row[0])
     except Exception:
         logger.exception("follow_up upsert_conversation failed thread=%s", thread_id)
+        return False
 
 
 async def mark_demo_requested(
