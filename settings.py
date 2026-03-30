@@ -140,6 +140,11 @@ PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 # Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
 WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
 
+# Conversation digest — hours between each digest report (0 = disabled)
+DIGEST_INTERVAL_HOURS = int(os.getenv("DIGEST_INTERVAL_HOURS", "24"))
+# How many hours back to include in each digest
+DIGEST_LOOKBACK_HOURS = int(os.getenv("DIGEST_LOOKBACK_HOURS", "24"))
+
 # ── Cost-optimization flags (all off by default for safe rollout) ──────────
 ENABLE_USAGE_METRICS = _get_bool("ENABLE_USAGE_METRICS", False)
 ENABLE_MODEL_ROUTER = _get_bool("ENABLE_MODEL_ROUTER", False)

@@ -98,6 +98,37 @@ async def mark_follow_up_sent(thread_id: str) -> None:
         logger.exception("follow_up mark_follow_up_sent failed thread=%s", thread_id)
 
 
+async def get_conversation_digest(lookback_hours: int = 24) -> list[dict]:
+    """Return conversations active in the last `lookback_hours` for the digest report."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT
+                        thread_id,
+                        phone_number,
+                        contact_name,
+                        memory_etapa,
+                        memory_summary,
+                        demo_requested,
+                        follow_up_sent,
+                        created_at,
+                        last_message_at
+                    FROM conversations
+                    WHERE last_message_at >= NOW() - INTERVAL '%s hours'
+                    ORDER BY last_message_at DESC
+                    """,
+                    (lookback_hours,),
+                )
+                cols = [d.name for d in cur.description]
+                return [dict(zip(cols, row)) for row in await cur.fetchall()]
+    except Exception:
+        logger.exception("get_conversation_digest failed")
+        return []
+
+
 async def get_conversation_memory(
     thread_id: str,
 ) -> tuple[str | None, str | None]:
