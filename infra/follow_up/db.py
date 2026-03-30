@@ -117,7 +117,7 @@ async def get_conversation_digest(lookback_hours: int = 24) -> list[dict]:
                         created_at,
                         last_message_at
                     FROM conversations
-                    WHERE last_message_at >= NOW() - INTERVAL '%s hours'
+                    WHERE last_message_at >= NOW() - (%s * INTERVAL '1 hour')
                     ORDER BY last_message_at DESC
                     """,
                     (lookback_hours,),
