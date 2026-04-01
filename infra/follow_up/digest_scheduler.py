@@ -75,14 +75,25 @@ def _build_digest(conversations: list[dict], lookback_hours: int) -> list[str]:
         wa_text = quote("Hola! Te escribo desde Kaax AI 👋", safe="")
         wa_link = f"https://wa.me/{display_phone}?text={wa_text}" if display_phone else "—"
 
-        snippet = summary[:200] + ("…" if len(summary) > 200 else "")
+        # Build conversation snippet from last messages
+        last_messages: list[tuple[str, str]] = conv.get("last_messages") or []
+        if last_messages:
+            lines = []
+            for role, content in last_messages:
+                icon = "👤" if role == "human" else "🤖"
+                lines.append(f"{icon} {content[:120]}{'…' if len(content) > 120 else ''}")
+            chat_snippet = "\n".join(lines)
+        elif summary:
+            chat_snippet = summary[:300] + ("…" if len(summary) > 300 else "")
+        else:
+            chat_snippet = "_Sin mensajes registrados_"
+
         block = (
             f"\n*{i}. {name}*\n"
             f"📱 +{display_phone}\n"
             f"💬 {wa_link}\n"
-            f"Etapa: {etapa_label} | Demo: {demo}\n"
-            f"Último mensaje: {last}\n"
-            f"_{snippet}_"
+            f"Etapa: {etapa_label} | Demo: {demo} | {last}\n"
+            f"{chat_snippet}"
         )
         blocks.append(block)
 

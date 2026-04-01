@@ -98,6 +98,39 @@ async def mark_follow_up_sent(thread_id: str) -> None:
         logger.exception("follow_up mark_follow_up_sent failed thread=%s", thread_id)
 
 
+def _decode_checkpoint_messages(blob: bytes, last_n: int = 6) -> list[tuple[str, str]]:
+    """Decode a LangGraph msgpack messages blob. Returns list of (role, content)."""
+    try:
+        import ormsgpack
+
+        def _ext(code, data):  # noqa: ANN001
+            return data
+
+        raw_list = ormsgpack.unpackb(blob, ext_hook=_ext)
+        results = []
+        for item in raw_list:
+            if not isinstance(item, bytes):
+                continue
+            try:
+                parts = ormsgpack.unpackb(item, ext_hook=_ext)
+                if isinstance(parts, (list, tuple)) and len(parts) >= 3:
+                    fields = parts[2]
+                    if isinstance(fields, dict):
+                        role = fields.get(b"type") or fields.get("type")
+                        content = fields.get(b"content") or fields.get("content")
+                        if isinstance(role, bytes):
+                            role = role.decode()
+                        if isinstance(content, bytes):
+                            content = content.decode()
+                        if role in ("human", "ai") and isinstance(content, str) and content.strip():
+                            results.append((role, content))
+            except Exception:
+                pass
+        return results[-last_n:]
+    except Exception:
+        return []
+
+
 async def get_conversation_digest(lookback_hours: int = 24) -> list[dict]:
     """Return conversations active in the last `lookback_hours` for the digest report."""
     url = get_database_url()
@@ -107,23 +140,38 @@ async def get_conversation_digest(lookback_hours: int = 24) -> list[dict]:
                 await cur.execute(
                     """
                     SELECT
-                        thread_id,
-                        phone_number,
-                        contact_name,
-                        memory_etapa,
-                        memory_summary,
-                        demo_requested,
-                        follow_up_sent,
-                        created_at,
-                        last_message_at
-                    FROM conversations
-                    WHERE last_message_at >= NOW() - (%s * INTERVAL '1 hour')
-                    ORDER BY last_message_at DESC
+                        c.thread_id,
+                        c.phone_number,
+                        c.contact_name,
+                        c.memory_etapa,
+                        c.memory_summary,
+                        c.demo_requested,
+                        c.follow_up_sent,
+                        c.created_at,
+                        c.last_message_at,
+                        cb.blob AS messages_blob
+                    FROM conversations c
+                    LEFT JOIN LATERAL (
+                        SELECT blob FROM checkpoint_blobs
+                        WHERE thread_id = c.thread_id
+                          AND channel = 'messages'
+                        ORDER BY version DESC
+                        LIMIT 1
+                    ) cb ON TRUE
+                    WHERE c.last_message_at >= NOW() - (%s * INTERVAL '1 hour')
+                    ORDER BY c.last_message_at DESC
                     """,
                     (lookback_hours,),
                 )
+                rows = await cur.fetchall()
                 cols = [d.name for d in cur.description]
-                return [dict(zip(cols, row)) for row in await cur.fetchall()]
+                result = []
+                for row in rows:
+                    d = dict(zip(cols, row))
+                    blob = d.pop("messages_blob", None)
+                    d["last_messages"] = _decode_checkpoint_messages(blob) if blob else []
+                    result.append(d)
+                return result
     except Exception:
         logger.exception("get_conversation_digest failed")
         return []
