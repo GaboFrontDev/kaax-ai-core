@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LW Mobiliario — Admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; min-height: 100vh; }
+
+    /* ── Auth ── */
+    #auth { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .auth-card { background: #fff; border-radius: 12px; padding: 40px; width: 100%; max-width: 380px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+    .auth-card h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 6px; }
+    .auth-card p { color: #666; font-size: .9rem; margin-bottom: 28px; }
+    .admin-btn { display: block; width: 100%; padding: 14px; margin-bottom: 12px; border: 2px solid #e5e5e5; border-radius: 8px; background: #fff; font-size: 1rem; cursor: pointer; text-align: left; transition: border-color .15s; }
+    .admin-btn:hover { border-color: #2563eb; }
+    .admin-btn .label { font-weight: 600; }
+    .admin-btn .sub { font-size: .8rem; color: #888; }
+    .otp-section { margin-top: 20px; }
+    .otp-section label { font-size: .85rem; font-weight: 600; display: block; margin-bottom: 8px; }
+    .otp-section input { width: 100%; padding: 12px; border: 2px solid #e5e5e5; border-radius: 8px; font-size: 1.2rem; letter-spacing: 4px; text-align: center; outline: none; }
+    .otp-section input:focus { border-color: #2563eb; }
+    .btn-primary { width: 100%; padding: 13px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .error-msg { color: #dc2626; font-size: .85rem; margin-top: 8px; }
+    .back-link { display: block; text-align: center; margin-top: 16px; font-size: .85rem; color: #2563eb; cursor: pointer; }
+
+    /* ── Dashboard ── */
+    #dashboard { display: none; }
+    .topbar { background: #fff; border-bottom: 1px solid #e5e5e5; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .topbar h1 { font-size: 1.1rem; font-weight: 700; }
+    .logout-btn { font-size: .85rem; color: #666; cursor: pointer; border: none; background: none; }
+    .layout { display: flex; height: calc(100vh - 53px); }
+
+    /* Sidebar */
+    .sidebar { width: 320px; min-width: 320px; border-right: 1px solid #e5e5e5; background: #fff; overflow-y: auto; }
+    .sidebar-header { padding: 16px; border-bottom: 1px solid #e5e5e5; display: flex; align-items: center; gap: 8px; }
+    .sidebar-header span { font-weight: 600; font-size: .9rem; }
+    .filter-toggle { margin-left: auto; font-size: .8rem; color: #2563eb; cursor: pointer; border: none; background: none; }
+    .conv-item { padding: 14px 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; transition: background .1s; }
+    .conv-item:hover { background: #f9fafb; }
+    .conv-item.active { background: #eff6ff; }
+    .conv-item.handoff { border-left: 3px solid #ef4444; }
+    .conv-name { font-weight: 600; font-size: .9rem; }
+    .conv-phone { font-size: .8rem; color: #888; }
+    .conv-time { font-size: .75rem; color: #aaa; margin-top: 2px; }
+    .conv-badge { display: inline-block; background: #fef2f2; color: #dc2626; font-size: .7rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; margin-top: 4px; }
+
+    /* Chat */
+    .chat { flex: 1; display: flex; flex-direction: column; }
+    .chat-header { padding: 14px 20px; border-bottom: 1px solid #e5e5e5; background: #fff; display: flex; align-items: center; justify-content: space-between; }
+    .chat-header .name { font-weight: 600; }
+    .chat-header .phone { font-size: .85rem; color: #888; }
+    .handoff-toggle { display: flex; align-items: center; gap: 8px; }
+    .handoff-toggle label { font-size: .85rem; font-weight: 500; }
+    .toggle { position: relative; width: 40px; height: 22px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: #ccc; border-radius: 22px; cursor: pointer; transition: .2s; }
+    .slider:before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+    input:checked + .slider { background: #ef4444; }
+    input:checked + .slider:before { transform: translateX(18px); }
+
+    .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 70%; padding: 10px 14px; border-radius: 12px; font-size: .9rem; line-height: 1.4; }
+    .msg.user { align-self: flex-start; background: #f3f4f6; }
+    .msg.agent { align-self: flex-end; background: #dbeafe; }
+    .msg.human { align-self: flex-end; background: #dcfce7; }
+    .msg .role { font-size: .7rem; font-weight: 600; color: #888; margin-bottom: 4px; }
+
+    .reply-bar { padding: 14px 16px; border-top: 1px solid #e5e5e5; background: #fff; display: flex; gap: 10px; }
+    .reply-bar textarea { flex: 1; padding: 10px 14px; border: 2px solid #e5e5e5; border-radius: 8px; font-size: .9rem; resize: none; outline: none; height: 44px; font-family: inherit; }
+    .reply-bar textarea:focus { border-color: #2563eb; }
+    .reply-bar button { padding: 0 20px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .reply-bar button:hover { background: #1d4ed8; }
+    .reply-bar button:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    .empty-chat { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: .9rem; }
+
+    .loading { text-align: center; padding: 40px; color: #aaa; }
+  </style>
+</head>
+<body>
+
+<!-- ── Auth ── -->
+<div id="auth">
+  <div class="auth-card">
+    <h1>LW Mobiliario</h1>
+    <p>Selecciona tu perfil para recibir el código de acceso</p>
+    <div id="admin-list"></div>
+    <div class="otp-section" id="otp-section" style="display:none">
+      <label>Código de verificación</label>
+      <input type="text" id="otp-input" maxlength="6" placeholder="000000" inputmode="numeric">
+      <button class="btn-primary" id="verify-btn" onclick="verifyOtp()">Verificar</button>
+      <div class="error-msg" id="auth-error"></div>
+      <a class="back-link" onclick="showAdminList()">← Volver</a>
+    </div>
+  </div>
+</div>
+
+<!-- ── Dashboard ── -->
+<div id="dashboard">
+  <div class="topbar">
+    <h1>🛋️ LW Mobiliario — Panel de conversaciones</h1>
+    <button class="logout-btn" onclick="logout()">Cerrar sesión</button>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span>Conversaciones</span>
+        <button class="filter-toggle" id="filter-btn" onclick="toggleFilter()">Solo handoff</button>
+      </div>
+      <div id="conv-list"><div class="loading">Cargando...</div></div>
+    </div>
+    <div class="chat" id="chat">
+      <div class="empty-chat">Selecciona una conversación</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let token = localStorage.getItem('admin_token');
+  let selectedPhone = null;
+  let selectedThread = null;
+  let handoffOnly = false;
+
+  if (token) showDashboard();
+
+  async function api(method, path, body) {
+    const res = await fetch(path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  }
+
+  // ── Auth ──
+  async function loadAdmins() {
+    const admins = await api('GET', '/admin/auth/admins');
+    const el = document.getElementById('admin-list');
+    el.innerHTML = admins.map(a => `
+      <button class="admin-btn" onclick="requestOtp('${a.phone}', '${a.label}')">
+        <div class="label">Acceder como ${a.label}</div>
+        <div class="sub">Recibirás un código por WhatsApp</div>
+      </button>
+    `).join('');
+  }
+
+  loadAdmins();
+
+  async function requestOtp(phone, label) {
+    selectedPhone = phone;
+    try {
+      await api('POST', '/admin/auth/request-otp', { phone });
+      document.getElementById('admin-list').style.display = 'none';
+      document.getElementById('otp-section').style.display = 'block';
+      document.getElementById('otp-input').focus();
+    } catch (e) {
+      alert('Error al enviar el código');
+    }
+  }
+
+  async function verifyOtp() {
+    const code = document.getElementById('otp-input').value.trim();
+    const btn = document.getElementById('verify-btn');
+    btn.disabled = true;
+    document.getElementById('auth-error').textContent = '';
+    try {
+      const res = await api('POST', '/admin/auth/verify-otp', { phone: selectedPhone, code });
+      token = res.token;
+      localStorage.setItem('admin_token', token);
+      showDashboard();
+    } catch (e) {
+      document.getElementById('auth-error').textContent = 'Código inválido o expirado';
+      btn.disabled = false;
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && document.getElementById('otp-section').style.display !== 'none') verifyOtp();
+  });
+
+  function showAdminList() {
+    document.getElementById('admin-list').style.display = 'block';
+    document.getElementById('otp-section').style.display = 'none';
+    document.getElementById('otp-input').value = '';
+  }
+
+  // ── Dashboard ──
+  function showDashboard() {
+    document.getElementById('auth').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    loadConversations();
+  }
+
+  function logout() {
+    localStorage.removeItem('admin_token');
+    token = null;
+    location.reload();
+  }
+
+  function toggleFilter() {
+    handoffOnly = !handoffOnly;
+    document.getElementById('filter-btn').textContent = handoffOnly ? 'Todas' : 'Solo handoff';
+    loadConversations();
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+
+  async function loadConversations() {
+    try {
+      const convs = await api('GET', `/admin/conversations?handoff_only=${handoffOnly}&limit=100`);
+      const el = document.getElementById('conv-list');
+      if (!convs.length) { el.innerHTML = '<div class="loading">Sin conversaciones</div>'; return; }
+      el.innerHTML = convs.map(c => `
+        <div class="conv-item ${c.handoff_requested ? 'handoff' : ''} ${selectedThread === c.thread_id ? 'active' : ''}"
+             onclick="openConversation('${c.thread_id}', '${c.phone_number || ''}', '${c.contact_name || c.phone_number || c.thread_id}', ${c.handoff_requested})">
+          <div class="conv-name">${c.contact_name || 'Sin nombre'}</div>
+          <div class="conv-phone">${c.phone_number || c.thread_id}</div>
+          <div class="conv-time">${fmtTime(c.last_message_at)}</div>
+          ${c.handoff_requested ? '<span class="conv-badge">Handoff</span>' : ''}
+        </div>
+      `).join('');
+    } catch (e) {
+      if (e.detail === 'Sesión expirada' || e.detail === 'Token inválido') { logout(); }
+    }
+  }
+
+  async function openConversation(threadId, phone, name, handoff) {
+    selectedThread = threadId;
+    loadConversations();
+    const chat = document.getElementById('chat');
+    chat.innerHTML = `
+      <div class="chat-header">
+        <div>
+          <div class="name">${name}</div>
+          <div class="phone">${phone}</div>
+        </div>
+        <div class="handoff-toggle">
+          <label>Handoff activo</label>
+          <label class="toggle">
+            <input type="checkbox" id="handoff-chk" ${handoff ? 'checked' : ''} onchange="toggleHandoff(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="messages" id="messages"><div class="loading">Cargando mensajes...</div></div>
+      <div class="reply-bar">
+        <textarea id="reply-input" placeholder="Escribe una respuesta..." onkeydown="handleReplyKey(event)"></textarea>
+        <button id="send-btn" onclick="sendReply()">Enviar</button>
+      </div>
+    `;
+    loadMessages(threadId);
+  }
+
+  async function loadMessages(threadId) {
+    try {
+      const msgs = await api('GET', `/admin/conversations/${threadId}/messages`);
+      const el = document.getElementById('messages');
+      if (!msgs || !msgs.length) { el.innerHTML = '<div class="loading">Sin mensajes</div>'; return; }
+      el.innerHTML = msgs.map(m => {
+        const role = m.type || m.role || 'unknown';
+        const text = m.content || (Array.isArray(m.content) ? m.content.map(c => c.text || '').join('') : '');
+        const cls = role === 'human' ? 'user' : role === 'ai' ? 'agent' : 'human';
+        const label = role === 'human' ? 'Cliente' : role === 'ai' ? 'Agente' : 'Admin';
+        return `<div class="msg ${cls}"><div class="role">${label}</div>${text}</div>`;
+      }).join('');
+      el.scrollTop = el.scrollHeight;
+    } catch (e) { }
+  }
+
+  async function toggleHandoff(active) {
+    await api('PATCH', `/admin/conversations/${selectedThread}/handoff`, { active });
+    loadConversations();
+  }
+
+  function handleReplyKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
+  }
+
+  async function sendReply() {
+    const input = document.getElementById('reply-input');
+    const btn = document.getElementById('send-btn');
+    const text = input.value.trim();
+    if (!text) return;
+    btn.disabled = true;
+    try {
+      await api('POST', `/admin/conversations/${selectedThread}/reply`, { text });
+      input.value = '';
+      loadMessages(selectedThread);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Refresca conversaciones cada 30s
+  setInterval(() => { if (token) loadConversations(); }, 30000);
+</script>
+</body>
+</html>

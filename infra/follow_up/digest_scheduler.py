@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from infra.follow_up.db import get_conversation_digest
 from settings import (
+    BRAND_NAME,
     DIGEST_INTERVAL_HOURS,
     DIGEST_LOOKBACK_HOURS,
     WHATSAPP_META_ACCESS_TOKEN,
@@ -51,7 +52,7 @@ def _build_digest(conversations: list[dict], lookback_hours: int) -> list[str]:
     demo_count = sum(1 for c in conversations if c.get("demo_requested"))
 
     header = (
-        f"📊 *Resumen de conversaciones — Kaax AI*\n"
+        f"📊 *Resumen de conversaciones — {BRAND_NAME}*\n"
         f"🗓️ Últimas {lookback_hours}h: *{total}* conversación(es) | "
         f"🎯 Demo solicitada: *{demo_count}*\n"
         f"{'─' * 30}"
@@ -72,7 +73,7 @@ def _build_digest(conversations: list[dict], lookback_hours: int) -> list[str]:
         if display_phone.startswith("521") and len(display_phone) == 13:
             display_phone = "52" + display_phone[3:]  # drop the extra 1
 
-        wa_text = quote("Hola! Te escribo desde Kaax AI 👋", safe="")
+        wa_text = quote(f"Hola! Te escribo de parte de {BRAND_NAME} 👋", safe="")
         wa_link = f"https://wa.me/{display_phone}?text={wa_text}" if display_phone else "—"
 
         # Build conversation snippet from last messages

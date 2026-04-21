@@ -10,6 +10,13 @@ from sql_utilities import get_database_url
 
 logger = logging.getLogger(__name__)
 
+CONTROL_MESSAGE_PREFIX = "[[control:"
+HANDOFF_RELEASED_CONTROL = "[[control:handoff_released]]"
+
+
+def is_control_message(content: str) -> bool:
+    return content.startswith(CONTROL_MESSAGE_PREFIX)
+
 
 async def upsert_conversation(
     thread_id: str,
@@ -218,3 +225,90 @@ async def update_conversation_memory(
             )
     except Exception:
         logger.exception("update_conversation_memory failed thread=%s", thread_id)
+
+
+async def get_handoff_requested(thread_id: str) -> bool:
+    """Return whether the conversation is currently assigned to human handoff."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT handoff_requested FROM conversations WHERE thread_id = %s",
+                    (thread_id,),
+                )
+                row = await cur.fetchone()
+                return bool(row and row[0])
+    except Exception:
+        logger.exception("get_handoff_requested failed thread=%s", thread_id)
+        return False
+
+
+async def set_handoff_requested(thread_id: str, active: bool) -> bool:
+    """Set handoff_requested and return True only when the value changed."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE conversations
+                    SET handoff_requested = %s
+                    WHERE thread_id = %s
+                      AND COALESCE(handoff_requested, FALSE) IS DISTINCT FROM %s
+                    RETURNING thread_id
+                    """,
+                    (active, thread_id, active),
+                )
+                row = await cur.fetchone()
+                return bool(row)
+    except Exception:
+        logger.exception(
+            "set_handoff_requested failed thread=%s active=%s",
+            thread_id,
+            active,
+        )
+        return False
+
+
+async def get_recent_messages(thread_id: str, limit: int = 6) -> list[tuple[str, str]]:
+    """Return the most recent persisted messages in chronological order."""
+    safe_limit = max(1, limit)
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT role, content
+                    FROM conversation_messages
+                    WHERE thread_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (thread_id, safe_limit),
+                )
+                rows = await cur.fetchall()
+                rows.reverse()
+                return [(str(role), str(content)) for role, content in rows]
+    except Exception:
+        logger.exception("get_recent_messages failed thread=%s", thread_id)
+        return []
+
+
+async def save_control_message(thread_id: str, content: str) -> None:
+    """Persist an internal control marker in the conversation timeline."""
+    await save_message(thread_id, "admin", content)
+
+
+async def save_message(thread_id: str, role: str, content: str) -> None:
+    """Persist a conversation message (human, agent, or admin)."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            await conn.execute(
+                "INSERT INTO conversation_messages (thread_id, role, content) VALUES (%s, %s, %s)",
+                (thread_id, role, content),
+            )
+    except Exception:
+        logger.exception("save_message failed thread=%s role=%s", thread_id, role)

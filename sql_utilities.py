@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import psycopg
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from settings import DATABASE_URL, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
@@ -38,6 +39,11 @@ def create_async_postgres_connection_pool() -> AsyncConnectionPool:
     database_url = get_database_url()
     pool = AsyncConnectionPool(
         conninfo=database_url,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
         min_size=1,
         max_size=10,
         timeout=30.0,
@@ -47,41 +53,21 @@ def create_async_postgres_connection_pool() -> AsyncConnectionPool:
     return pool
 
 
-async def setup_postgres_checkpointer_tables_async(checkpointer) -> bool:
-    """Initialize LangGraph checkpoint tables, with advisory lock for concurrency safety."""
-    setup_lock_id = 12345678
-    database_url = get_database_url()
+async def setup_postgres_checkpointer_tables_async(checkpointer) -> bool:  # noqa: ARG001
+    """Initialize LangGraph checkpoint tables.
 
+    Uses a temporary AsyncPostgresSaver with its own autocommit connection so that
+    CREATE INDEX CONCURRENTLY (which cannot run inside a transaction) succeeds.
+    Advisory locks were removed because pgBouncer session-mode poolers keep sessions
+    alive across restarts, causing pg_advisory_lock to hang indefinitely.
+    The `checkpointer` argument is kept for API compatibility but is not used.
+    """
     try:
-        async with await psycopg.AsyncConnection.connect(database_url, autocommit=True) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT pg_try_advisory_lock(%s)", (setup_lock_id,))
-                result = await cur.fetchone()
-                lock_acquired = result[0]
-
-                if not lock_acquired:
-                    logger.info("Waiting for another process to finish checkpoint table setup")
-                    await cur.execute("SELECT pg_advisory_lock(%s)", (setup_lock_id,))
-
-                try:
-                    await cur.execute(
-                        """
-                        SELECT EXISTS (
-                            SELECT FROM information_schema.tables
-                            WHERE table_schema = 'public' AND table_name = 'checkpoints'
-                        )
-                        """
-                    )
-                    exists = (await cur.fetchone())[0]
-
-                    if exists:
-                        logger.debug("Checkpoint tables already exist")
-                    else:
-                        logger.info("Creating checkpoint tables")
-                        await checkpointer.setup()
-                finally:
-                    await cur.execute("SELECT pg_advisory_unlock(%s)", (setup_lock_id,))
-
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        database_url = get_database_url()
+        async with AsyncPostgresSaver.from_conn_string(database_url) as tmp:
+            await tmp.setup()
+        logger.info("Checkpoint tables ready")
         return True
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Failed to setup checkpoint tables: %s", exc)

@@ -17,6 +17,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from settings import (
+    BRAND_NAME,
     DEMO_LINK,
     WHATSAPP_META_ACCESS_TOKEN,
     WHATSAPP_META_API_VERSION,
@@ -48,7 +49,7 @@ def _build_notification(
     caller_phone: str | None = None,
     contact_name: str | None = None,
 ) -> str:
-    lines = ["🔔 *Nuevo lead capturado — Kaax AI*"]
+    lines = [f"🔔 *Nuevo lead capturado — {BRAND_NAME}*"]
     if channel:
         label = _CHANNEL_LABELS.get(channel.lower(), channel)
         lines.append(f"📡 Canal: {label}")
@@ -80,7 +81,7 @@ async def _send_demo_link(phone: str) -> None:
     try:
         from infra.whatsapp_meta.client import send_meta_text_message
 
-        message = f"¡Hola! Aquí está el link para agendar tu demo con Kaax AI:\n{DEMO_LINK}"
+        message = f"¡Hola! Aquí está el link para agendar tu demo con {BRAND_NAME}:\n{DEMO_LINK}"
         await send_meta_text_message(
             api_version=WHATSAPP_META_API_VERSION,
             phone_number_id=WHATSAPP_META_PHONE_NUMBER_ID,

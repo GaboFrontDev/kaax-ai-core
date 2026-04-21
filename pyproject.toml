@@ -19,6 +19,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
     "pyyaml>=6.0.2",
+    "PyJWT>=2.9.0",
     "uvicorn>=0.34.2",
     "websockets>=12.0",
 ]

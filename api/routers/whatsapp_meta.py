@@ -12,9 +12,9 @@ from fastapi.responses import PlainTextResponse
 
 from api.agent_service import AgentService
 from api.dependencies import get_agent_service
-from api.handlers import process_request
 from infra.adapters import AdapterNotConfiguredError, get_whatsapp_adapter
 from infra.follow_up.db import upsert_conversation
+from infra.whatsapp_meta.conversation_graph import whatsapp_conversation_graph
 from infra.whatsapp_meta.client import download_media, send_meta_text_message, send_typing_action
 from infra.whatsapp_meta.webhook import (
     validate_meta_signature,
@@ -139,6 +139,11 @@ async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None
     # Track conversation for follow-up scheduling
     is_new = await upsert_conversation(thread_id=session_id, phone_number=inbound.from_number)
 
+    # Persist user message
+    if inbound.text:
+        from infra.follow_up.db import save_message
+        await save_message(session_id, "human", inbound.text)
+
     if is_new and WHATSAPP_NOTIFY_TO and WHATSAPP_META_ACCESS_TOKEN and WHATSAPP_META_PHONE_NUMBER_ID:
         try:
             await send_meta_text_message(
@@ -159,26 +164,37 @@ async def _handle_inbound(inbound, agent_service: AgentService, adapter) -> None
                 "whatsapp_meta processing message_id=%s from=%s session=%s",
                 inbound.message_id, inbound.from_number, session_id,
             )
-            if inbound.message_id:
-                await send_typing_action(
+
+            flow_state = await whatsapp_conversation_graph.run(
+                assist_request=assist_request,
+                agent_service=agent_service,
+                session_id=session_id,
+                phone_number=inbound.from_number,
+                phone_number_id=phone_number_id,
+            )
+            should_send_reply = bool(flow_state.get("should_send_reply", True))
+            answer_text = str(flow_state.get("reply_text", "") or "").strip()
+            if should_send_reply and not answer_text:
+                answer_text = "Gracias por tu mensaje. En breve te ayudamos."
+
+            if should_send_reply and answer_text:
+                if inbound.message_id:
+                    await send_typing_action(
+                        api_version=WHATSAPP_META_API_VERSION,
+                        phone_number_id=phone_number_id,
+                        access_token=WHATSAPP_META_ACCESS_TOKEN,
+                        message_id=inbound.message_id,
+                    )
+                await send_meta_text_message(
                     api_version=WHATSAPP_META_API_VERSION,
                     phone_number_id=phone_number_id,
                     access_token=WHATSAPP_META_ACCESS_TOKEN,
-                    message_id=inbound.message_id,
+                    to=inbound.from_number,
+                    text=answer_text,
                 )
 
-            assist_response = await process_request(assist_request, agent_service)
-            answer_text = adapter.extract_outbound_text(assist_response)
-            if not answer_text:
-                answer_text = "Gracias por tu mensaje. En breve te ayudamos."
-
-            await send_meta_text_message(
-                api_version=WHATSAPP_META_API_VERSION,
-                phone_number_id=phone_number_id,
-                access_token=WHATSAPP_META_ACCESS_TOKEN,
-                to=inbound.from_number,
-                text=answer_text,
-            )
+                from infra.follow_up.db import save_message
+                await save_message(session_id, "agent", answer_text)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "whatsapp_meta_processing_error message_id=%s session=%s",

@@ -92,6 +92,16 @@ WhatsApp → FastAPI → MultiAgentSupervisor → LangGraph agent → Bedrock (C
 
 ---
 
+## Principios de solución
+
+- El enfoque por defecto para cambios conversacionales debe seguir el flow de LangGraph.
+- Priorizar `StateGraph`, estado explícito, rutas condicionales y salidas estructuradas sobre lógica pegada al router o al borde.
+- Priorizar decisiones semánticas basadas en estado, contexto e intención sobre heurísticas frágiles como listas de frases o strings exactos.
+- Usar listas de frases o matching literal solo como último recurso para integraciones de borde, compatibilidad o failsafes muy concretos.
+- Cuando un comportamiento sea parte del negocio conversacional (handoff, routing, escalación, recovery, etc.), debe modelarse dentro del flujo del grafo y no como post-procesamiento superficial de mensajes.
+
+---
+
 ## Deploy
 
 ```bash

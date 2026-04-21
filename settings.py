@@ -57,6 +57,7 @@ def _get_optional_float(name: str) -> float | None:
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_COLORIZED = _get_bool("LOG_COLORIZED", True)
+BRAND_NAME = os.getenv("BRAND_NAME", "nuestro equipo")
 API_TOKENS = [
     token.strip()
     for token in os.getenv("API_TOKENS", "dev-token").split(",")
@@ -140,6 +141,11 @@ PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 # Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
 WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
 
+# Admin panel
+ADMIN_PHONES = [p.strip() for p in os.getenv("ADMIN_PHONES", "").split(",") if p.strip()]
+ADMIN_JWT_SECRET = os.getenv("ADMIN_JWT_SECRET", "change-me-in-production")
+ADMIN_JWT_EXPIRE_HOURS = _get_int("ADMIN_JWT_EXPIRE_HOURS", 8)
+
 # Conversation digest — hours between each digest report (0 = disabled)
 DIGEST_INTERVAL_HOURS = int(os.getenv("DIGEST_INTERVAL_HOURS", "24"))
 # How many hours back to include in each digest
@@ -187,7 +193,7 @@ MODEL_COST_TABLE_JSON = os.getenv(
 # Use {name} for the contact name (with leading space) or leave it out.
 FOLLOW_UP_MESSAGE = os.getenv(
     "FOLLOW_UP_MESSAGE",
-    "Hola{name}! Solo quería saber si tienes alguna duda sobre Kaax AI. "
+    f"Hola{{name}}! Solo quería saber si tienes alguna duda sobre {BRAND_NAME}. "
     "Estoy aquí para ayudarte cuando quieras.",
 )
 

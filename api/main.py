@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.dependencies import set_session_manager
@@ -51,6 +53,12 @@ def create_app() -> FastAPI:
 
     app.add_middleware(VoiceRequestLogger)
     app.include_router(router)
+
+    _static_dir = Path(__file__).parent / "static"
+
+    @app.get("/admin", include_in_schema=False)
+    async def admin_ui():
+        return FileResponse(_static_dir / "admin.html")
     app.state.session_manager = SessionManager()
 
     @app.exception_handler(RequestValidationError)
