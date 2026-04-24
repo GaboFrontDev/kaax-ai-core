@@ -22,6 +22,22 @@ from settings import (
 router = APIRouter(prefix="/admin/auth", tags=["admin-auth"])
 
 _OTP_EXPIRE_MINUTES = 5
+_RATE_LIMIT = 3
+_RATE_WINDOW_SECONDS = 5 * 60
+
+# {phone: [timestamp, ...]} — timestamps of recent attempts within the window
+_otp_request_attempts: dict[str, list[datetime]] = {}
+_otp_verify_attempts: dict[str, list[datetime]] = {}
+
+
+def _check_rate_limit(store: dict[str, list[datetime]], phone: str) -> None:
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=_RATE_WINDOW_SECONDS)
+    attempts = [t for t in store.get(phone, []) if t > cutoff]
+    if len(attempts) >= _RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos, espera 5 minutos")
+    attempts.append(now)
+    store[phone] = attempts
 
 
 def _generate_otp() -> str:
@@ -87,6 +103,7 @@ class VerifyOTPBody(BaseModel):
 async def request_otp(body: RequestOTPBody):
     if body.phone not in ADMIN_PHONES:
         raise HTTPException(status_code=403, detail="Número no autorizado")
+    _check_rate_limit(_otp_request_attempts, body.phone)
 
     code = _generate_otp()
     await _save_otp(body.phone, code)
@@ -108,6 +125,7 @@ async def request_otp(body: RequestOTPBody):
 async def verify_otp(body: VerifyOTPBody):
     if body.phone not in ADMIN_PHONES:
         raise HTTPException(status_code=403, detail="Número no autorizado")
+    _check_rate_limit(_otp_verify_attempts, body.phone)
 
     valid = await _verify_otp(body.phone, body.code)
     if not valid:
