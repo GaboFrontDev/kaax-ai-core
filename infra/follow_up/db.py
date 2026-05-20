@@ -244,8 +244,8 @@ async def get_handoff_requested(thread_id: str) -> bool:
         return False
 
 
-async def set_handoff_requested(thread_id: str, active: bool) -> bool:
-    """Set handoff_requested and return True only when the value changed."""
+async def mark_handoff_notified(thread_id: str) -> int:
+    """Stamp handoff_notified_at = NOW(), increment counter, return new counter."""
     url = get_database_url()
     try:
         async with await psycopg.AsyncConnection.connect(url) as conn:
@@ -253,7 +253,109 @@ async def set_handoff_requested(thread_id: str, active: bool) -> bool:
                 await cur.execute(
                     """
                     UPDATE conversations
-                    SET handoff_requested = %s
+                    SET handoff_notified_at = NOW(),
+                        handoff_reminders_sent = COALESCE(handoff_reminders_sent, 0) + 1
+                    WHERE thread_id = %s
+                    RETURNING handoff_reminders_sent
+                    """,
+                    (thread_id,),
+                )
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+    except Exception:
+        logger.exception("mark_handoff_notified failed thread=%s", thread_id)
+        return 0
+
+
+async def reset_handoff_notification(thread_id: str) -> None:
+    """Clear notification state — called when admin replies or handoff closes."""
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            await conn.execute(
+                """
+                UPDATE conversations
+                SET handoff_notified_at = NULL,
+                    handoff_reminders_sent = 0
+                WHERE thread_id = %s
+                """,
+                (thread_id,),
+            )
+    except Exception:
+        logger.exception("reset_handoff_notification failed thread=%s", thread_id)
+
+
+async def get_stale_handoffs(
+    *, stale_after_minutes: int, max_reminders: int
+) -> list[dict]:
+    """Return active handoffs that haven't been replied to by an admin.
+
+    A conversation qualifies when ALL hold:
+      - handoff_requested = TRUE
+      - handoff_notified_at IS NOT NULL  (we sent at least the initial alert)
+      - last notification was sent more than `stale_after_minutes` ago
+      - we haven't sent more than `max_reminders` reminders yet
+      - no admin message has been posted since the last notification
+    """
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT c.thread_id,
+                           c.phone_number,
+                           c.contact_name,
+                           c.handoff_notified_at,
+                           c.handoff_reminders_sent
+                    FROM conversations c
+                    WHERE c.handoff_requested = TRUE
+                      AND c.handoff_notified_at IS NOT NULL
+                      AND c.handoff_notified_at < NOW() - make_interval(mins => %s)
+                      AND COALESCE(c.handoff_reminders_sent, 0) <= %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM conversation_messages m
+                        WHERE m.thread_id = c.thread_id
+                          AND m.role = 'admin'
+                          AND m.created_at > c.handoff_notified_at
+                      )
+                    ORDER BY c.handoff_notified_at ASC
+                    LIMIT 50
+                    """,
+                    (stale_after_minutes, max_reminders),
+                )
+                rows = await cur.fetchall()
+                return [
+                    {
+                        "thread_id": str(r[0]),
+                        "phone_number": str(r[1]) if r[1] else "",
+                        "contact_name": str(r[2]) if r[2] else "",
+                        "handoff_notified_at": r[3],
+                        "handoff_reminders_sent": int(r[4]) if r[4] else 0,
+                    }
+                    for r in rows
+                ]
+    except Exception:
+        logger.exception("get_stale_handoffs failed")
+        return []
+
+
+async def set_handoff_requested(thread_id: str, active: bool) -> bool:
+    """Set handoff_requested and return True only when the value changed.
+
+    When transitioning into handoff (False → True) or out (True → False), the
+    notification counters are reset so reminders restart cleanly next time.
+    """
+    url = get_database_url()
+    try:
+        async with await psycopg.AsyncConnection.connect(url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE conversations
+                    SET handoff_requested = %s,
+                        handoff_notified_at = NULL,
+                        handoff_reminders_sent = 0
                     WHERE thread_id = %s
                       AND COALESCE(handoff_requested, FALSE) IS DISTINCT FROM %s
                     RETURNING thread_id

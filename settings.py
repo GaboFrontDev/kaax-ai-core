@@ -138,8 +138,13 @@ MULTI_AGENT_ENABLED = _get_bool("MULTI_AGENT_ENABLED", True)
 DEMO_LINK = os.getenv("DEMO_LINK", "https://calendly.com/admin-novadream/30min")
 PRICING_LINK = os.getenv("PRICING_LINK", "https://kaax.ai/#precios")
 
-# Lead capture notifications — your personal WhatsApp number (e.g. 5215512345678)
+# Lead capture + handoff notifications — your personal WhatsApp number (e.g. 5215512345678)
 WHATSAPP_NOTIFY_TO = os.getenv("WHATSAPP_NOTIFY_TO", "")
+
+# Handoff reminder: while a conversation is in handoff and no admin replied,
+# resend the WhatsApp ping every HANDOFF_REMINDER_MINUTES, up to HANDOFF_REMINDER_MAX.
+HANDOFF_REMINDER_MINUTES = _get_int("HANDOFF_REMINDER_MINUTES", 5)
+HANDOFF_REMINDER_MAX = _get_int("HANDOFF_REMINDER_MAX", 6)
 
 # Admin panel
 ADMIN_PHONES = [p.strip() for p in os.getenv("ADMIN_PHONES", "").split(",") if p.strip()]

@@ -87,13 +87,17 @@ def create_app() -> FastAPI:
         set_session_manager(app.state.session_manager)
         from infra.follow_up.scheduler import run_scheduler
         from infra.follow_up.digest_scheduler import run_digest_scheduler
+        from infra.handoff.reminder_scheduler import run_handoff_reminder_scheduler
         app.state.follow_up_task = asyncio.create_task(run_scheduler())
         app.state.digest_task = asyncio.create_task(run_digest_scheduler())
+        app.state.handoff_reminder_task = asyncio.create_task(
+            run_handoff_reminder_scheduler()
+        )
         logger.info("Core API started")
 
     @app.on_event("shutdown")
     async def shutdown_event():
-        for attr in ("follow_up_task", "digest_task"):
+        for attr in ("follow_up_task", "digest_task", "handoff_reminder_task"):
             task = getattr(app.state, attr, None)
             if task:
                 task.cancel()

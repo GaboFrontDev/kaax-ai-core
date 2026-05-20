@@ -16,6 +16,7 @@ from infra.follow_up.db import (
     get_handoff_requested,
     get_recent_messages,
     is_control_message,
+    mark_handoff_notified,
     set_handoff_requested,
 )
 from infra.whatsapp_meta.client import send_meta_text_message
@@ -315,6 +316,7 @@ class WhatsAppConversationGraph:
                 to=WHATSAPP_NOTIFY_TO,
                 text=_build_handoff_notification(state),
             )
+            await mark_handoff_notified(state["session_id"])
         except Exception:
             logger.exception(
                 "whatsapp_graph handoff notification failed session=%s",
